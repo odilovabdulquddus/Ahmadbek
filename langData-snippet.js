@@ -1,4 +1,4 @@
-const langData = {
+﻿const langData = {
             uz: {
                 navAbout: "Biz haqimizda", all: "BARCHASI", salat: "SALATLAR", milliy: "UYGUR VA MILLIY",
                 yevropa: "YEVROPA VA TURK", turkish: "TURKISH", firmali: "FIRMINIY", pide: "PITSA PIDE",
@@ -29,7 +29,7 @@ const langData = {
                 newProductWeightLabel: "Miqdori (gramm/ml) *", newProductImageLabel: "Rasm URL yoki Yuklash", addProductBtn: "✅ Mahsulot qo'shish",
                 catSalat: "Salatlar", catMilliy: "Uygur va Milliy", catYevropa: "Yevropa va Turk", catTurkish: "Turkish",
                 catFirmali: "Firmali taomlar", catPide: "Pitsa Pide", catIchimlik: "Ichimliklar", catShirinlik: "Shirinliklar",
-                roomsPanelTitle: "рџљЄ Xonalar", bookingTitle: "вЏ° Xona band qilish", roomNumberLabel: "Xona raqami:",
+                roomsPanelTitle: "🚪 Xonalar", bookingTitle: "⏰ Xona band qilish", roomNumberLabel: "Xona raqami:",
                 roomSelectLabel: "Xona raqamini tanlang:", roomNameLabel: "*Ism",
                 roomPhoneLabel: "Telefon raqam:", roomPhoneHelper: "+998 90 123 45 67",
                 roomDateLabel: "*Kuni", roomDateHelper: "Bugungi kun avtomatik tanlanadi va har kuni 00:00 da yangilanadi.",
@@ -133,12 +133,12 @@ const langData = {
                 newProductWeightLabel: "Вес (гр/мл) *", newProductImageLabel: "URL изображения или загрузить", addProductBtn: "✅ Добавить продукт",
                 catSalat: "Салаты", catMilliy: "Уйгурские и национальные", catYevropa: "Европейские и турецкие",
                 catTurkish: "Турецкие", catFirmali: "Фирменные блюда", catPide: "Пицца Пиде", catIchimlik: "Напитки",
-                roomsPanelTitle: "рџљЄ РљРѕРјРЅР°С‚С‹", bookingTitle: "вЏ° Р‘СЂРѕРЅРёСЂРѕРІР°РЅРёРµ РєРѕРјРЅР°С‚С‹", roomNumberLabel: "РќРѕРјРµСЂ РєРѕРјРЅР°С‚С‹:",
-                roomSelectLabel: "Р’С‹Р±РµСЂРёС‚Рµ РЅРѕРјРµСЂ РєРѕРјРЅС‹:", roomNameLabel: "*РРјСЏ",
-                roomPhoneLabel: "РќРѕРјРµСЂ С‚РµР»РµС„РѕРЅР°:", roomPhoneHelper: "+998 90 123 45 67",
-                roomDateLabel: "*Р”Р°С‚Р°", roomDateHelper: "РЎРµРіРѕРґРЅСЏС€РЅСЏСЏ РґР°С‚Р° Р°РІС‚РѕРјР°С‚РёС‡РЅРѕ РІС‹Р±РёСЂР°РµС‚СЃСЏ Рё РѕР±РЅРѕРІР»СЏРµС‚СЃСЏ РЅР° 00:00.",
-                startTimeLabel: "Р’СЂРµРјСЏ РЅР°С‡Р°Р»Р°:", endTimeLabel: "Р’СЂРµРјСЏ РѕРєРѕРЅС‡Р°РЅРёСЏ:",
-                roomTimeHelper: "Р‘СЂРѕРЅРёСЂРѕРІР°РЅРёРµ РґРѕСЃС‚СѓРїРЅРѕ СЃ 08:00 РґРѕ 23:00, РїР»СЋСЃ 10 РјРёРЅСѓС‚ РЅР° СѓР±РѕСЂРєСѓ Р´Рѕ Рё РїРѕСЃР»Рµ",
+                roomsPanelTitle: "🚪 Комнаты", bookingTitle: "⏰ Бронирование комнаты", roomNumberLabel: "Номер комнаты:",
+                roomSelectLabel: "Выберите номер комны:", roomNameLabel: "*РРјСЏ",
+                roomPhoneLabel: "Номер телефона:", roomPhoneHelper: "+998 90 123 45 67",
+                roomDateLabel: "*Р”Р°С‚Р°", roomDateHelper: "Сегодняшняя дата автоматично выбирается и обновляется на 00:00.",
+                startTimeLabel: "Время начала:", endTimeLabel: "Время окончания:",
+                roomTimeHelper: "Бронирование доступно с 08:00 до 23:00, плюс 10 минут на уборку �?о и после",
                 bookRoomBtn: "✅ Забронировать", myOrdersPanelTitle: "📋 Мои заказы",
                 loginRequiredOrdersText: "🔐 Войдите в аккаунт, чтобы увидеть заказы", loginRequiredOrdersBtn: "Войти",
                 badgeText: "Коллекция из 171+ блюд", heroTitleFirst: "Несравненный", heroTitleSpan: "выбор продуктов",
@@ -314,3 +314,5 @@ const langData = {
                 maxOrderUnit: " pieces"
             }
         };
+
+
