@@ -12,9 +12,12 @@
         href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&family=Montserrat:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <link rel="stylesheet" href="style.css">
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+    <script>
+        // Ensure Google Maps callback exists even if the API loads before script.js
+        function onGoogleMapsReady() { window.__googleMapsReady = true; }
+    </script>
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAeRL5ugx-QH2mDRf1RjxTW-XVKsYc7wm8&callback=onGoogleMapsReady"></script>
 
     <script src="script.js" defer></script>
 </head>

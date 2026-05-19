@@ -1,16 +1,17 @@
-﻿        document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I') ||
-                (e.ctrlKey && e.shiftKey && e.key === 'J') || (e.ctrlKey && e.key === 'U') ||
-                (e.ctrlKey && e.key === 'S')) {
-                e.preventDefault(); return false;
-            } 
-            if (e.key === 'Escape' && typeof imageModalState !== 'undefined' && imageModalState.open) {
-                closeImageModal();
-            }
-        });
-        console.log('%c🚫 Kodni ko\'rish bloklangan!', 'color: red; font-size: 20px; font-weight: bold;');
+﻿        // document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+        // document.addEventListener('keydown', function (e) {
+        //     if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I') ||
+        //         (e.ctrlKey && e.shiftKey && e.key === 'J') || (e.ctrlKey && e.key === 'U') ||
+        //         (e.ctrlKey && e.key === 'S')) {
+        //         e.preventDefault(); return false;
+        //     } 
+        //     if (e.key === 'Escape' && typeof imageModalState !== 'undefined' && imageModalState.open) {
+        //         closeImageModal();
+        //     }
+        // });
+        // console.log('%c🚫 Kodni ko\'rish bloklangan!', 'color: red; font-size: 20px; font-weight: bold;');
     
+
 
         // ==================== KONSTANTALAR ====================
         const COURIER_PRICE = 20000;
@@ -19,7 +20,7 @@
         const UZBEK_OPERATORS = ['33', '88', '90', '91', '93', '94', '95', '97', '98', '99'];
         const ROOM_COUNT = 15;
         const ROOM_CLEANING_BUFFER = 10; // minutes before and after for cleaning
-        const ROOM_OPEN_HOUR = 8;
+        const ROOM_OPEN_HOUR = 8; 
         const ROOM_CLOSE_HOUR = 23;
 
         async function includePartials() {
@@ -852,20 +853,27 @@
         function hideNotification() { document.getElementById('notification').classList.remove('show'); }
         function handleNotificationClick() { hideNotification(); }
 
-        // ==================== XARITA FUNKSIYALARI (Leaflet + OpenStreetMap) ====================
+        // ==================== XARITA FUNKSIYALARI (Google Maps) ====================
         let selectedMapLocation = null;
         let selectedLocation = null; // {lat, lng}
         let mapInstance = null;
         let mapMarker = null;
-        let mapTileLayers = null;
         let mapActiveLayer = 'standard';
+        let googleMapsReady = !!window.__googleMapsReady;
+        let mapGeocoder = null;
 
         // Approx Uzbekistan bounds (to keep the map inside the country).
         const UZ_BOUNDS = { south: 37.0, west: 55.9, north: 45.6, east: 73.3 };
 
+        // Google Maps async callback (declared in index.html script src)
+        function onGoogleMapsReady() {
+            window.__googleMapsReady = true;
+            googleMapsReady = true;
+        }
+
         function openMapModal() {
             const d = langData[currentLang];
-            if (!window.L) {
+            if (!googleMapsReady || !window.google || !window.google.maps) {
                 alert(d.mapLoadError);
                 return;
             }
@@ -877,10 +885,15 @@
             }
             updateMapUiText();
             renderLayersPanel();
-            setTimeout(() => mapInstance.invalidateSize(), 80);
+            setTimeout(() => {
+                try {
+                    window.google.maps.event.trigger(mapInstance, 'resize');
+                    if (selectedLocation) mapInstance.panTo(selectedLocation);
+                } catch { }
+            }, 80);
 
             if (selectedLocation) {
-                mapInstance.panTo([selectedLocation.lat, selectedLocation.lng]);
+                mapInstance.panTo(selectedLocation);
                 placeMapMarker(selectedLocation);
             }
         }
@@ -890,37 +903,34 @@
         }
 
         function initMapCanvas() {
-            if (mapInstance || !window.L) return;
+            if (mapInstance || !googleMapsReady || !window.google || !window.google.maps) return;
 
-            const center = [40.9983, 71.6728]; // Namangan, Uzbekistan
-            mapInstance = L.map('mapCanvas', {
-                zoomControl: true,
-                minZoom: 6,
-                maxZoom: 19
-            }).setView(center, 13);
-
-            const bounds = L.latLngBounds([UZ_BOUNDS.south, UZ_BOUNDS.west], [UZ_BOUNDS.north, UZ_BOUNDS.east]);
-            mapInstance.setMaxBounds(bounds);
-            mapInstance.on('drag', () => mapInstance.panInsideBounds(bounds, { animate: false }));
-
-            mapTileLayers = {
-                standard: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors'
-                }),
-                dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-                }),
-                satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                    maxZoom: 19,
-                    attribution: '&copy; Esri'
-                })
+            const center = { lat: 40.9983, lng: 71.6728 }; // Namangan, Uzbekistan
+            const bounds = {
+                north: UZ_BOUNDS.north,
+                south: UZ_BOUNDS.south,
+                east: UZ_BOUNDS.east,
+                west: UZ_BOUNDS.west
             };
-            mapTileLayers[mapActiveLayer].addTo(mapInstance);
 
-            mapInstance.on('click', function (e) {
-                selectedLocation = { lat: e.latlng.lat, lng: e.latlng.lng };
+            mapInstance = new window.google.maps.Map(document.getElementById('mapCanvas'), {
+                center,
+                zoom: 13,
+                minZoom: 6,
+                maxZoom: 19,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false,
+                gestureHandling: 'greedy',
+                restriction: { latLngBounds: bounds, strictBounds: true }
+            });
+
+            mapGeocoder = new window.google.maps.Geocoder();
+            applyGoogleMapLayer(mapActiveLayer);
+
+            mapInstance.addListener('click', (e) => {
+                if (!e || !e.latLng) return;
+                selectedLocation = { lat: e.latLng.lat(), lng: e.latLng.lng() };
                 placeMapMarker(selectedLocation);
             });
 
@@ -936,10 +946,12 @@
         }
 
         function placeMapMarker(position) {
-            if (!mapInstance || !window.L || !position) return;
-            const latlng = [position.lat, position.lng];
-            if (!mapMarker) mapMarker = L.marker(latlng).addTo(mapInstance);
-            else mapMarker.setLatLng(latlng);
+            if (!mapInstance || !googleMapsReady || !window.google || !window.google.maps || !position) return;
+            if (!mapMarker) {
+                mapMarker = new window.google.maps.Marker({ map: mapInstance, position });
+            } else {
+                mapMarker.setPosition(position);
+            }
         }
 
         function toggleLayersPanel() {
@@ -949,13 +961,35 @@
         }
 
         function setMapLayer(layerKey) {
-            if (!mapInstance || !mapTileLayers) return;
-            if (!mapTileLayers[layerKey]) return;
             if (mapActiveLayer === layerKey) return;
-            mapInstance.removeLayer(mapTileLayers[mapActiveLayer]);
             mapActiveLayer = layerKey;
-            mapTileLayers[mapActiveLayer].addTo(mapInstance);
+            applyGoogleMapLayer(mapActiveLayer);
             renderLayersPanel();
+        }
+
+        const GOOGLE_MAP_DARK_STYLES = [
+            { elementType: 'geometry', stylers: [{ color: '#1d1712' }] },
+            { elementType: 'labels.text.fill', stylers: [{ color: '#e0d6cc' }] },
+            { elementType: 'labels.text.stroke', stylers: [{ color: '#0f0b07' }] },
+            { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#6ba5e8' }] },
+            { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2b221b' }] },
+            { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a130c' }] },
+            { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#d8cdbf' }] },
+            { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0b1218' }] },
+            { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#6ba5e8' }] }
+        ];
+
+        function applyGoogleMapLayer(layerKey) {
+            if (!mapInstance || !googleMapsReady || !window.google || !window.google.maps) return;
+            if (layerKey === 'satellite') {
+                mapInstance.setOptions({ mapTypeId: 'satellite', styles: null });
+                return;
+            }
+            if (layerKey === 'dark') {
+                mapInstance.setOptions({ mapTypeId: 'roadmap', styles: GOOGLE_MAP_DARK_STYLES });
+                return;
+            }
+            mapInstance.setOptions({ mapTypeId: 'roadmap', styles: null });
         }
 
         function renderLayersPanel() {
@@ -981,16 +1015,14 @@
             if (btnLoc) btnLoc.title = d.mapMyLocationBtnTitle;
         }
 
-        async function reverseGeocodeOSM(lat, lng, lang) {
+        async function reverseGeocodeGoogle(lat, lng, lang) {
             try {
-                // Nominatim is rate-limited; keep it minimal and have a fallback.
-                const acceptLang = lang === 'ru' ? 'ru' : 'en';
-                const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1&accept-language=${acceptLang}`;
-                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-                if (!res.ok) return null;
-                const data = await res.json();
-                return data && data.display_name ? data.display_name : null;
-            } catch (e) {
+                if (!mapGeocoder || !window.google || !window.google.maps) return null;
+                const language = lang === 'ru' ? 'ru' : (lang === 'uz' ? 'uz' : 'en');
+                const result = await mapGeocoder.geocode({ location: { lat, lng }, language });
+                const results = result && Array.isArray(result.results) ? result.results : [];
+                return results[0] && results[0].formatted_address ? results[0].formatted_address : null;
+            } catch {
                 return null;
             }
         }
@@ -1001,27 +1033,35 @@
             const q = (input ? input.value : '').trim();
             if (!q) return;
             try {
-                const acceptLang = currentLang === 'ru' ? 'ru' : 'en';
-                // Focus search around Namangan by default.
-                const namanganViewbox = '71.45,41.10,72.05,40.85'; // west,north,east,south
-                const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&countrycodes=uz&viewbox=${namanganViewbox}&bounded=1&limit=1&accept-language=${acceptLang}`;
-                const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-                if (!res.ok) throw new Error('search failed');
-                const results = await res.json();
-                if (!Array.isArray(results) || results.length === 0) {
+                if (!mapGeocoder || !window.google || !window.google.maps) throw new Error('geocoder missing');
+                const language = currentLang === 'ru' ? 'ru' : (currentLang === 'uz' ? 'uz' : 'en');
+                const result = await mapGeocoder.geocode({
+                    address: q,
+                    bounds: {
+                        north: UZ_BOUNDS.north,
+                        south: UZ_BOUNDS.south,
+                        east: UZ_BOUNDS.east,
+                        west: UZ_BOUNDS.west
+                    },
+                    region: 'UZ',
+                    language
+                });
+                const results = result && Array.isArray(result.results) ? result.results : [];
+                if (results.length === 0) {
                     alert(d.mapSearchNoResults);
                     return;
                 }
-                const r = results[0];
-                const lat = Number(r.lat);
-                const lng = Number(r.lon);
+                const loc = results[0]?.geometry?.location;
+                const lat = loc ? loc.lat() : NaN;
+                const lng = loc ? loc.lng() : NaN;
                 if (!isFinite(lat) || !isFinite(lng)) {
                     alert(d.mapSearchNoResults);
                     return;
                 }
                 selectedLocation = { lat, lng };
                 placeMapMarker(selectedLocation);
-                mapInstance.setView([lat, lng], 16);
+                mapInstance.setZoom(16);
+                mapInstance.panTo(selectedLocation);
             } catch (e) {
                 alert(d.mapSearchError);
             }
@@ -1044,7 +1084,8 @@
                     }
                     selectedLocation = { lat, lng };
                     placeMapMarker(selectedLocation);
-                    mapInstance.setView([lat, lng], 16);
+                    mapInstance.setZoom(16);
+                    mapInstance.panTo(selectedLocation);
                 },
                 () => alert(d.mapMyLocationDenied),
                 { enableHighAccuracy: true, timeout: 8000 }
@@ -1062,7 +1103,7 @@
             const lng = Number(selectedLocation.lng);
             const addressInput = document.getElementById('addressInput');
 
-            const address = await reverseGeocodeOSM(lat, lng, currentLang);
+            const address = await reverseGeocodeGoogle(lat, lng, currentLang);
             if (addressInput) {
                 if (address) {
                     if (address.toLowerCase().includes('namangan')) addressInput.value = address;
@@ -1072,7 +1113,7 @@
                 }
             }
 
-            selectedMapLocation = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=18/${lat}/${lng}`;
+            selectedMapLocation = `https://www.google.com/maps?q=${lat},${lng}`;
             showNotification(d.mapSelectedTitle, d.mapSelectedMsg, "success");
             closeMapModal();
             refreshCheckoutAddressSection();
@@ -1097,12 +1138,13 @@
 	        function toggleProfileDropdown() {
 	            const d = document.getElementById('profileDropdown'), o = document.getElementById('profileOverlay');
 	            if (d.classList.contains('active')) closeProfileDropdown();
-	            else { d.classList.add('active'); o.classList.add('active'); updateProfileDropdown(); }
+	            else { closeAllUiOverlays(); d.classList.add('active'); o.classList.add('active'); updateProfileDropdown(); }
 	        }
 	        function closeProfileDropdown() { document.getElementById('profileDropdown').classList.remove('active'); document.getElementById('profileOverlay').classList.remove('active'); }
 	        function openProfileDropdown() {
 	            const d = document.getElementById('profileDropdown'), o = document.getElementById('profileOverlay');
 	            if (!d || !o) return;
+	            closeAllUiOverlays();
 	            d.classList.add('active');
 	            o.classList.add('active');
 	            updateProfileDropdown();
@@ -1308,7 +1350,7 @@
             { id: "44", cat: "milliy", name: { uz: "Qovurma Lag'mon", ru: "Жареный лагман", en: "Kavurma lagman" }, weight: "450g", price: 36500, img: "Menyu/qovurma_lagman.png", quantity: 0 },
             { id: "45", cat: "milliy", name: { uz: "Shorva", ru: "Суп", en: "Sorva" }, weight: "400ml", price: 39000, img: "Menyu/shorva.png", quantity: 0 }, 
             { id: "46", cat: "milliy", name: { uz: "Mastava", ru: "Мастава", en: "Mastava" }, weight: "400ml", price: 32000, img: "Menyu/masatava.png", quantity: 0 },
-            { id: "47", cat: "milliy", name: { uz: "Qozon kabob", ru: "Казан кебаб", en: "Kazan kobab" }, weight: "400g", price: 35100, img: "Menyu/qozon_kabob.png", quantity: 0 },
+            { id: "47", cat: "milliy", name: { uz: "Qozon kabob", ru: "Казан кебаб", en: "Kazan kobab" }, w: "400g", price: 35100, img: "Menyu/qozon_kabob.png", quantity: 0 },
             { id: "48", cat: "milliy", name: { uz: "Sumburu", ru: "Сумбуру", en: "Sumburu" }, weight: "500g", price: 165800, img: "Menyu/sumburu.png", quantity: 0 },
             { id: "49", cat: "milliy", name: { uz: "Sukuru", ru: "Сукуру", en: "Sukuru" }, weight: "500g", price: 165800, img: "Menyu/sukuru.png", quantity: 0 }, // I need all convert .pngs to .pngs
             { id: "50", cat: "milliy", name: { uz: "Tandir", ru: "Тандыр", en: "Tandir" }, weight: "200g", price: 10000, img: "Menyu/tandir.png", quantity: 0 },
