@@ -15,8 +15,8 @@
 
         // ==================== KONSTANTALAR ====================
         const COURIER_PRICE = 20000;
-        const TELEGRAM_TOKEN = "8500253252:AAHdxCCMQ5PvodFy9lVb1AoNEtL8o1D9NiA";
-        const TELEGRAM_CHAT_ID = "8623072909";
+        const TELEGRAM_TOKEN = "8500253252:AAH9U28LrFPsu6oegiudbhn_VkFfzRiaAAQ";
+        const TELEGRAM_CHAT_ID = "-1003944795383";
         const UZBEK_OPERATORS = ['33', '88', '90', '91', '93', '94', '95', '97', '98', '99'];
         const ROOM_COUNT = 15;
         const ROOM_CLEANING_BUFFER = 10; // minutes before and after for cleaning
@@ -354,6 +354,9 @@
                     body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' })
                 });
                 const data = await response.json();
+                if (!data.ok) {
+                    console.error('Telegram API javobi:', data);
+                }
                 return data.ok;
             } catch (error) {
                 console.error('Telegram xatosi:', error);
