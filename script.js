@@ -855,27 +855,21 @@
         function hideNotification() { document.getElementById('notification').classList.remove('show'); }
         function handleNotificationClick() { hideNotification(); }
 
-        // ==================== XARITA FUNKSIYALARI (Google Maps) ====================
+        // ==================== XARITA FUNKSIYALARI (Leaflet + OpenStreetMap) ====================
         let selectedMapLocation = null;
         let selectedLocation = null; // {lat, lng}
         let mapInstance = null;
         let mapMarker = null;
         let mapActiveLayer = 'standard';
-        let googleMapsReady = !!window.__googleMapsReady;
-        let mapGeocoder = null;
+        let mapLayers = null;
 
         // Approx Uzbekistan bounds (to keep the map inside the country).
         const UZ_BOUNDS = { south: 37.0, west: 55.9, north: 45.6, east: 73.3 };
-
-        // Google Maps async callback (declared in index.html script src)
-        function onGoogleMapsReady() {
-            window.__googleMapsReady = true;
-            googleMapsReady = true;
-        }
+        const UZ_CENTER = { lat: 40.9983, lng: 71.6728 };
 
         function openMapModal() {
             const d = langData[currentLang];
-            if (!googleMapsReady || !window.google || !window.google.maps) {
+            if (!window.L) {
                 alert(d.mapLoadError);
                 return;
             }
@@ -889,13 +883,13 @@
             renderLayersPanel();
             setTimeout(() => {
                 try {
-                    window.google.maps.event.trigger(mapInstance, 'resize');
-                    if (selectedLocation) mapInstance.panTo(selectedLocation);
+                    mapInstance.invalidateSize();
+                    if (selectedLocation) mapInstance.panTo([selectedLocation.lat, selectedLocation.lng]);
                 } catch { }
             }, 80);
 
             if (selectedLocation) {
-                mapInstance.panTo(selectedLocation);
+                mapInstance.panTo([selectedLocation.lat, selectedLocation.lng]);
                 placeMapMarker(selectedLocation);
             }
         }
@@ -905,34 +899,43 @@
         }
 
         function initMapCanvas() {
-            if (mapInstance || !googleMapsReady || !window.google || !window.google.maps) return;
+            if (mapInstance || !window.L) return;
 
-            const center = { lat: 40.9983, lng: 71.6728 }; // Namangan, Uzbekistan
-            const bounds = {
-                north: UZ_BOUNDS.north,
-                south: UZ_BOUNDS.south,
-                east: UZ_BOUNDS.east,
-                west: UZ_BOUNDS.west
-            };
+            const bounds = window.L.latLngBounds(
+                [UZ_BOUNDS.south, UZ_BOUNDS.west],
+                [UZ_BOUNDS.north, UZ_BOUNDS.east]
+            );
 
-            mapInstance = new window.google.maps.Map(document.getElementById('mapCanvas'), {
-                center,
+            mapInstance = window.L.map('mapCanvas', {
+                center: [UZ_CENTER.lat, UZ_CENTER.lng],
                 zoom: 13,
                 minZoom: 6,
                 maxZoom: 19,
-                mapTypeControl: false,
-                streetViewControl: false,
-                fullscreenControl: false,
-                gestureHandling: 'greedy',
-                restriction: { latLngBounds: bounds, strictBounds: true }
+                maxBounds: bounds,
+                maxBoundsViscosity: 1.0,
+                zoomControl: true
             });
 
-            mapGeocoder = new window.google.maps.Geocoder();
-            applyGoogleMapLayer(mapActiveLayer);
+            mapLayers = {
+                standard: window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap contributors'
+                }),
+                satellite: window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    attribution: 'Tiles &copy; Esri'
+                }),
+                dark: window.L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 19,
+                    subdomains: 'abcd',
+                    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+                })
+            };
+            applyMapLayer(mapActiveLayer);
 
-            mapInstance.addListener('click', (e) => {
-                if (!e || !e.latLng) return;
-                selectedLocation = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+            mapInstance.on('click', (e) => {
+                if (!e || !e.latlng) return;
+                selectedLocation = { lat: e.latlng.lat, lng: e.latlng.lng };
                 placeMapMarker(selectedLocation);
             });
 
@@ -948,11 +951,11 @@
         }
 
         function placeMapMarker(position) {
-            if (!mapInstance || !googleMapsReady || !window.google || !window.google.maps || !position) return;
+            if (!mapInstance || !window.L || !position) return;
             if (!mapMarker) {
-                mapMarker = new window.google.maps.Marker({ map: mapInstance, position });
+                mapMarker = window.L.marker([position.lat, position.lng]).addTo(mapInstance);
             } else {
-                mapMarker.setPosition(position);
+                mapMarker.setLatLng([position.lat, position.lng]);
             }
         }
 
@@ -965,33 +968,17 @@
         function setMapLayer(layerKey) {
             if (mapActiveLayer === layerKey) return;
             mapActiveLayer = layerKey;
-            applyGoogleMapLayer(mapActiveLayer);
+            applyMapLayer(mapActiveLayer);
             renderLayersPanel();
         }
 
-        const GOOGLE_MAP_DARK_STYLES = [
-            { elementType: 'geometry', stylers: [{ color: '#1d1712' }] },
-            { elementType: 'labels.text.fill', stylers: [{ color: '#e0d6cc' }] },
-            { elementType: 'labels.text.stroke', stylers: [{ color: '#0f0b07' }] },
-            { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#6ba5e8' }] },
-            { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2b221b' }] },
-            { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1a130c' }] },
-            { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#d8cdbf' }] },
-            { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0b1218' }] },
-            { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#6ba5e8' }] }
-        ];
-
-        function applyGoogleMapLayer(layerKey) {
-            if (!mapInstance || !googleMapsReady || !window.google || !window.google.maps) return;
-            if (layerKey === 'satellite') {
-                mapInstance.setOptions({ mapTypeId: 'satellite', styles: null });
-                return;
-            }
-            if (layerKey === 'dark') {
-                mapInstance.setOptions({ mapTypeId: 'roadmap', styles: GOOGLE_MAP_DARK_STYLES });
-                return;
-            }
-            mapInstance.setOptions({ mapTypeId: 'roadmap', styles: null });
+        function applyMapLayer(layerKey) {
+            if (!mapInstance || !mapLayers) return;
+            Object.values(mapLayers).forEach((layer) => {
+                if (mapInstance.hasLayer(layer)) mapInstance.removeLayer(layer);
+            });
+            const nextLayer = mapLayers[layerKey] || mapLayers.standard;
+            nextLayer.addTo(mapInstance);
         }
 
         function renderLayersPanel() {
@@ -1017,13 +1004,13 @@
             if (btnLoc) btnLoc.title = d.mapMyLocationBtnTitle;
         }
 
-        async function reverseGeocodeGoogle(lat, lng, lang) {
+        async function reverseGeocode(lat, lng, lang) {
             try {
-                if (!mapGeocoder || !window.google || !window.google.maps) return null;
                 const language = lang === 'ru' ? 'ru' : (lang === 'uz' ? 'uz' : 'en');
-                const result = await mapGeocoder.geocode({ location: { lat, lng }, language });
-                const results = result && Array.isArray(result.results) ? result.results : [];
-                return results[0] && results[0].formatted_address ? results[0].formatted_address : null;
+                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&accept-language=${encodeURIComponent(language)}`);
+                if (!res.ok) return null;
+                const data = await res.json();
+                return data?.display_name || null;
             } catch {
                 return null;
             }
@@ -1035,27 +1022,16 @@
             const q = (input ? input.value : '').trim();
             if (!q) return;
             try {
-                if (!mapGeocoder || !window.google || !window.google.maps) throw new Error('geocoder missing');
                 const language = currentLang === 'ru' ? 'ru' : (currentLang === 'uz' ? 'uz' : 'en');
-                const result = await mapGeocoder.geocode({
-                    address: q,
-                    bounds: {
-                        north: UZ_BOUNDS.north,
-                        south: UZ_BOUNDS.south,
-                        east: UZ_BOUNDS.east,
-                        west: UZ_BOUNDS.west
-                    },
-                    region: 'UZ',
-                    language
-                });
-                const results = result && Array.isArray(result.results) ? result.results : [];
+                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=uz&accept-language=${encodeURIComponent(language)}&q=${encodeURIComponent(q)}`);
+                if (!res.ok) throw new Error('search failed');
+                const results = await res.json();
                 if (results.length === 0) {
                     alert(d.mapSearchNoResults);
                     return;
                 }
-                const loc = results[0]?.geometry?.location;
-                const lat = loc ? loc.lat() : NaN;
-                const lng = loc ? loc.lng() : NaN;
+                const lat = Number(results[0]?.lat);
+                const lng = Number(results[0]?.lon);
                 if (!isFinite(lat) || !isFinite(lng)) {
                     alert(d.mapSearchNoResults);
                     return;
@@ -1063,7 +1039,7 @@
                 selectedLocation = { lat, lng };
                 placeMapMarker(selectedLocation);
                 mapInstance.setZoom(16);
-                mapInstance.panTo(selectedLocation);
+                mapInstance.panTo([lat, lng]);
             } catch (e) {
                 alert(d.mapSearchError);
             }
@@ -1076,7 +1052,7 @@
                 return;
             }
             navigator.geolocation.getCurrentPosition(
-                (pos) => {
+                async (pos) => {
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
                     const inside = lat >= UZ_BOUNDS.south && lat <= UZ_BOUNDS.north && lng >= UZ_BOUNDS.west && lng <= UZ_BOUNDS.east;
@@ -1087,7 +1063,8 @@
                     selectedLocation = { lat, lng };
                     placeMapMarker(selectedLocation);
                     mapInstance.setZoom(16);
-                    mapInstance.panTo(selectedLocation);
+                    mapInstance.panTo([lat, lng]);
+                    await selectLocationFromMap();
                 },
                 () => alert(d.mapMyLocationDenied),
                 { enableHighAccuracy: true, timeout: 8000 }
@@ -1105,7 +1082,7 @@
             const lng = Number(selectedLocation.lng);
             const addressInput = document.getElementById('addressInput');
 
-            const address = await reverseGeocodeGoogle(lat, lng, currentLang);
+            const address = await reverseGeocode(lat, lng, currentLang);
             if (addressInput) {
                 if (address) {
                     if (address.toLowerCase().includes('namangan')) addressInput.value = address;
@@ -1115,7 +1092,7 @@
                 }
             }
 
-            selectedMapLocation = `https://www.google.com/maps?q=${lat},${lng}`;
+            selectedMapLocation = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
             showNotification(d.mapSelectedTitle, d.mapSelectedMsg, "success");
             closeMapModal();
             refreshCheckoutAddressSection();
@@ -1126,7 +1103,7 @@
             const d = langData[currentLang];
             const dropdown = document.getElementById('profileDropdown');
             dropdown.innerHTML = `
-            <div class="profile-dropdown-header"><span style="font-weight:700; color:var(--primary);">${d.profileTitle}</span><button class="profile-dropdown-close" onclick="closeProfileDropdown()">✕</button></div>
+            <div class="profile-dropdown-header"><span style="font-weight:700; color:var(--primary);">${d.profileTitle}</span><button type="button" class="profile-dropdown-close" onclick="closeProfileDropdown()"><i class="fas fa-times"></i><span>Yopish</span></button></div>
             <div id="profileNotLoggedIn"><div class="tab-buttons"><button class="tab-button active" onclick="switchAuthTab('login')">${d.loginTitle}</button><button class="tab-button" onclick="switchAuthTab('register')">${d.registerTitle}</button></div>
             <div id="loginForm" class="form-tab active"><div class="profile-field"><label>${d.loginPhoneLabel}</label><input type="text" id="loginPhone" value="+998 " oninput="formatPhone(this)"></div><div class="profile-field"><label>${d.loginPasswordLabel}</label><input type="password" id="loginPassword"></div><button class="save-profile-btn" onclick="loginUser()">${d.loginBtn}</button></div>
             <div id="registerForm" class="form-tab" style="display:none;"><div class="profile-field"><label>${d.regNameLabel}</label><input type="text" id="regName"></div><div class="profile-field"><label>${d.regPhoneLabel}</label><input type="text" id="regPhone" value="+998 " oninput="formatPhone(this)"></div><div class="profile-field"><label>${d.regPasswordLabel}</label><input type="password" id="regPassword"></div><div class="profile-field"><label>${d.regConfirmLabel}</label><input type="password" id="regConfirmPassword"></div><button class="save-profile-btn" onclick="registerUser()">${d.registerBtn}</button></div></div>
@@ -1138,26 +1115,16 @@
         }
 
 	        function toggleProfileDropdown() {
-	            const d = document.getElementById('profileDropdown'), o = document.getElementById('profileOverlay');
+	            const d = document.getElementById('profileDropdown');
+	            if (!d) return;
 	            if (d.classList.contains('active')) closeProfileDropdown();
-	            else { closeAllUiOverlays(); d.classList.add('active'); o.classList.add('active'); updateProfileDropdown(); }
+	            else openProfileDropdown();
 	        }
-	        function closeProfileDropdown() { document.getElementById('profileDropdown').classList.remove('active'); document.getElementById('profileOverlay').classList.remove('active'); }
-	        function openProfileDropdown() {
-	            const d = document.getElementById('profileDropdown'), o = document.getElementById('profileOverlay');
-	            if (!d || !o) return;
-	            closeAllUiOverlays();
-	            d.classList.add('active');
-	            o.classList.add('active');
-	            updateProfileDropdown();
+	        function closeProfileDropdown() {
+	            const dropdown = document.getElementById('profileDropdown');
+	            if (dropdown) dropdown.classList.remove('active');
 	        }
-
-            function openMobileProfile() {
-                closeMobileMenu();
-                openProfileDropdown();
-            }
-
-	        function closeAllUiOverlays() {
+	        function closeSecondaryUiOverlays() {
 	            const cartPanel = document.getElementById('cartPanel');
 	            if (cartPanel) cartPanel.classList.remove('active');
 	            const myOrdersPanel = document.getElementById('myOrdersPanel');
@@ -1166,8 +1133,6 @@
 	            if (roomsPanel) roomsPanel.classList.remove('active');
 	            const adminPanel = document.getElementById('adminPanel');
 	            if (adminPanel) adminPanel.classList.remove('active');
-
-	            closeProfileDropdown();
 	            closeMobileMenu();
 	            closeMapModal();
 	            try { closeImageModal(); } catch (e) {
@@ -1177,6 +1142,23 @@
 	                if (imageModalImg) imageModalImg.src = '';
 	            }
 	            toggleAbout(false);
+	        }
+	        function openProfileDropdown() {
+	            const d = document.getElementById('profileDropdown');
+	            if (!d) return;
+	            closeSecondaryUiOverlays();
+	            d.classList.add('active');
+	            updateProfileDropdown();
+	        }
+
+            function openMobileProfile() {
+                closeMobileMenu();
+                openProfileDropdown();
+            }
+
+	        function closeAllUiOverlays() {
+	            closeSecondaryUiOverlays();
+	            closeProfileDropdown();
 	        }
 
         function switchAuthTab(tab) {
@@ -2890,6 +2872,9 @@
 
         // ==================== ISHGA TUSHIRISH ====================
         async function bootstrap() {
+            if (window.__appBootstrapped) return;
+            window.__appBootstrapped = true;
+
             await includePartials();
 
             setInterval(updateOnlineUsers, 10000);
@@ -2928,20 +2913,21 @@
 	                });
 	            }
 
+                document.addEventListener('click', (e) => {
+                    const profileContainer = document.querySelector('.profile-container');
+                    if (profileContainer && !profileContainer.contains(e.target)) {
+                        closeProfileDropdown();
+                    }
+                });
+
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') closeAllUiOverlays();
+                });
+
             window.onscroll = () => {
                 document.getElementById('scrollToTop')?.classList.toggle('show', document.body.scrollTop > 200 || document.documentElement.scrollTop > 200);
             };
         }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            bootstrap().catch((err) => console.error('bootstrap failed', err));
-        });
-    
-
-        document.addEventListener('DOMContentLoaded', () => {
-            bootstrap().catch((err) => console.error('bootstrap failed', err));
-        });
-    
 
         document.addEventListener('DOMContentLoaded', () => {
             bootstrap().catch((err) => console.error('bootstrap failed', err));

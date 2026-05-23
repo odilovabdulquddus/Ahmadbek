@@ -12,13 +12,9 @@
         href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800;900&family=Montserrat:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <link rel="stylesheet" href="style.css">
-    <script>
-        // Ensure Google Maps callback exists even if the API loads before script.js
-        function onGoogleMapsReady() { window.__googleMapsReady = true; }
-    </script>
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAeRL5ugx-QH2mDRf1RjxTW-XVKsYc7wm8&callback=onGoogleMapsReady"></script>
-
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
     <script src="script.js" defer></script>
 </head>
 
@@ -35,7 +31,7 @@
 
 
 <!-- OVERLAYS -->
-    <div id="profileOverlay" onclick="closeProfileDropdown()"></div>
+    <div id="profileOverlay"></div>
     <div class="mobile-menu-overlay" id="mobileMenuOverlay" onclick="closeMobileMenu()"></div>
 
 
@@ -47,8 +43,6 @@
             <div class="mobile-menu-close" onclick="closeMobileMenu()"
                 style="font-size: 24px; cursor: pointer; color: var(--primary);">✕</div>
         </div>
-        <div class="mobile-menu-item" onclick="toggleProfileDropdown(); closeMobileMenu();"><i
-                class="fas fa-user-circle"></i> <span id="mobileProfileText">Profil</span></div>
         <div class="mobile-menu-item" onclick="toggleMyOrdersPanel(); closeMobileMenu();"><i class="fas fa-list"></i>
             <span id="mobileOrdersText">Buyurtmalarim</span> <span class="badge" id="mobileOrdersBadge">0</span>
         </div>
@@ -103,9 +97,9 @@
             <div class="orders-icon-btn" onclick="toggleMyOrdersPanel()" title="Buyurtmalarim">📋 <span
                     id="myOrdersCount">0</span></div>
             <div class="profile-container">
-                <div class="profile-icon" onclick="toggleProfileDropdown()" id="profileIcon"><i class="fas fa-user"></i>
+                <div class="profile-icon" onclick="event.stopPropagation(); toggleProfileDropdown()" id="profileIcon"><i class="fas fa-user"></i>
                 </div>
-                <div class="profile-dropdown" id="profileDropdown"></div>
+                <div class="profile-dropdown" id="profileDropdown" onclick="event.stopPropagation()"></div>
             </div>
             <div class="cart-icon-btn" onclick="togglePanel('cartPanel')">🛒 <span id="cartCount">0</span></div>
             <div class="hamburger-menu" id="hamburgerMenu" onclick="toggleMobileMenu()">
