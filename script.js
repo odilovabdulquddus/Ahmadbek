@@ -1,15 +1,15 @@
-﻿        // document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-        // document.addEventListener('keydown', function (e) {
-        //     if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I') ||
-        //         (e.ctrlKey && e.shiftKey && e.key === 'J') || (e.ctrlKey && e.key === 'U') ||
-        //         (e.ctrlKey && e.key === 'S')) {
-        //         e.preventDefault(); return false;
-        //     } 
-        //     if (e.key === 'Escape' && typeof imageModalState !== 'undefined' && imageModalState.open) {
-        //         closeImageModal();
-        //     }
-        // });
-        // console.log('%c🚫 Kodni ko\'rish bloklangan!', 'color: red; font-size: 20px; font-weight: bold;');
+﻿        document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I') ||
+                (e.ctrlKey && e.shiftKey && e.key === 'J') || (e.ctrlKey && e.key === 'U') ||
+                (e.ctrlKey && e.key === 'S')) {
+                e.preventDefault(); return false;
+            } 
+            if (e.key === 'Escape' && typeof imageModalState !== 'undefined' && imageModalState.open) {
+                closeImageModal();
+            }
+        });
+        console.log('%c🚫 Kodni ko\'rish bloklangan!', 'color: red; font-size: 20px; font-weight: bold;');
     
 
 
