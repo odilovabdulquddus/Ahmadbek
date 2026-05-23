@@ -80,6 +80,8 @@
                 candidates.push(`Menyu/${slug}.png`, `Menyu/${slug}.png`, `Menyu/${slug}.jpeg`, `Menyu/${slug}.webp`);
             });
 
+            
+
             // 2) Keep the original (remote) url as a fallback
             if (product?.img) candidates.push(product.img);
 
