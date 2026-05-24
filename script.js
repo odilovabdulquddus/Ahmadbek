@@ -22,6 +22,54 @@
         const ROOM_CLEANING_BUFFER = 10; // minutes before and after for cleaning
         const ROOM_OPEN_HOUR = 8; 
         const ROOM_CLOSE_HOUR = 23;
+        const ADDRESS_PREFIX = 'Namangan, ';
+        const MIN_ADDRESS_LENGTH = 18;
+        const DEFAULT_PRODUCT_WEIGHT = { uz: '1 Dona', ru: '1 шт', en: '1 pc' };
+        const AUTH_TOKEN_STORAGE_KEY = 'authToken';
+        const API_BASE_OVERRIDE = typeof window.__API_BASE__ === 'string' ? window.__API_BASE__.trim() : '';
+        let resolvedApiBasePromise = null;
+
+        async function canReachApi(base) {
+            try {
+                const response = await fetch(`${base}/api/health`, { cache: 'no-store' });
+                return response.ok;
+            } catch {
+                return false;
+            }
+        }
+
+        async function resolveApiBase() {
+            if (API_BASE_OVERRIDE) return API_BASE_OVERRIDE;
+
+            const { protocol, hostname, origin, port } = window.location;
+            const candidates = [];
+            const pushCandidate = (value) => {
+                if (typeof value !== 'string') return;
+                const normalized = value.trim().replace(/\/+$/, '');
+                if (!candidates.includes(normalized)) candidates.push(normalized);
+            };
+
+            pushCandidate('');
+
+            if (protocol === 'file:') {
+                pushCandidate('http://localhost:3000');
+            } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+                pushCandidate(origin);
+                if (port !== '3000') pushCandidate(`${protocol}//${hostname}:3000`);
+                if (hostname !== 'localhost') pushCandidate('http://localhost:3000');
+            }
+
+            for (const candidate of candidates) {
+                if (await canReachApi(candidate)) return candidate;
+            }
+
+            return candidates[0] || '';
+        }
+
+        function getApiBase() {
+            if (!resolvedApiBasePromise) resolvedApiBasePromise = resolveApiBase();
+            return resolvedApiBasePromise;
+        }
 
         async function includePartials() {
             const targets = Array.from(document.querySelectorAll('[data-include]'));
@@ -53,6 +101,26 @@
                 .replace(/[^a-z0-9_-]/g, '');
         }
 
+        function createDefaultWeight() {
+            return { ...DEFAULT_PRODUCT_WEIGHT };
+        }
+
+        function normalizeProductWeight(weight) {
+            if (weight && typeof weight === 'object') {
+                return {
+                    uz: String(weight.uz || DEFAULT_PRODUCT_WEIGHT.uz),
+                    ru: String(weight.ru || DEFAULT_PRODUCT_WEIGHT.ru),
+                    en: String(weight.en || DEFAULT_PRODUCT_WEIGHT.en)
+                };
+            }
+            return createDefaultWeight();
+        }
+
+        function getLocalizedWeightText(weight, lang = currentLang) {
+            const normalized = normalizeProductWeight(weight);
+            return normalized[lang] || normalized.uz || DEFAULT_PRODUCT_WEIGHT.uz;
+        }
+
         function getProductImageCandidates(product) {
             const candidates = [];
             const id = String(product?.id || '').trim();
@@ -67,17 +135,37 @@
                 toSafeSlug(fallbackName),
             ].filter(Boolean);
 
-            // If product already points to a local Menyu image, try it first
+            const previewCandidateFor = (candidate) => {
+                if (typeof candidate !== 'string') return '';
+                if (!candidate.startsWith('Menyu/')) return '';
+                const match = candidate.match(/^Menyu\/(.+)\.(png|jpe?g|webp)$/i);
+                if (!match) return '';
+                return `Menyu/previews/${match[1]}.jpg`;
+            };
+
+            const pushLocalCandidate = (candidate) => {
+                const preview = previewCandidateFor(candidate);
+                if (preview) candidates.push(preview);
+                candidates.push(candidate);
+            };
+
+            // If product already points to a local Menyu image, try preview first
             if (typeof product?.img === 'string' && product.img.startsWith('Menyu/')) {
-                candidates.push(product.img);
+                pushLocalCandidate(product.img);
             }
 
             // 1) If you put images into /Menyu, the app will try these first
             if (id) {
-                candidates.push(`Menyu/${id}.png`, `Menyu/${id}.png`, `Menyu/${id}.jpeg`, `Menyu/${id}.webp`);
+                pushLocalCandidate(`Menyu/${id}.png`);
+                pushLocalCandidate(`Menyu/${id}.jpg`);
+                pushLocalCandidate(`Menyu/${id}.jpeg`);
+                pushLocalCandidate(`Menyu/${id}.webp`);
             }
             slugs.forEach((slug) => {
-                candidates.push(`Menyu/${slug}.png`, `Menyu/${slug}.png`, `Menyu/${slug}.jpeg`, `Menyu/${slug}.webp`);
+                pushLocalCandidate(`Menyu/${slug}.png`);
+                pushLocalCandidate(`Menyu/${slug}.jpg`);
+                pushLocalCandidate(`Menyu/${slug}.jpeg`);
+                pushLocalCandidate(`Menyu/${slug}.webp`);
             });
 
             
@@ -128,6 +216,200 @@
             } catch (error) {
                 console.warn(`localStorage key "${key}" contains invalid JSON.`, error);
                 return fallback;
+            }
+        }
+
+        function warmProductImages(container, limit = 18) {
+            const images = Array.from(container?.querySelectorAll('img[data-fallbacks]') || []).slice(0, limit);
+            images.forEach((img) => {
+                const src = img.getAttribute('src');
+                if (!src || src.startsWith('data:')) return;
+                const preloader = new Image();
+                preloader.decoding = 'async';
+                preloader.src = src;
+            });
+        }
+
+        function getAuthToken() {
+            return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
+        }
+
+        function setAuthToken(token) {
+            if (token) localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+            else localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+        }
+
+        async function apiRequest(path, options = {}) {
+            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+            const token = getAuthToken();
+            if (token) headers.Authorization = `Bearer ${token}`;
+            const apiBase = await getApiBase();
+
+            const response = await fetch(`${apiBase}${path}`, {
+                method: options.method || 'GET',
+                headers,
+                body: options.body === undefined ? undefined : JSON.stringify(options.body)
+            });
+
+            const raw = await response.text();
+            let data = {};
+            if (raw) {
+                try {
+                    data = JSON.parse(raw);
+                } catch {
+                    data = {};
+                }
+            }
+            if (!response.ok) {
+                const fallbackMessage = response.status === 404
+                    ? 'Server API topilmadi. Backend ishga tushmagan bo\'lishi mumkin.'
+                    : 'Request failed';
+                const error = new Error(data.error || fallbackMessage);
+                error.status = response.status;
+                throw error;
+            }
+            return data;
+        }
+
+        let backendAvailable = false;
+
+        async function safeApiRequest(path, options = {}) {
+            try {
+                const data = await apiRequest(path, options);
+                backendAvailable = true;
+                return data;
+            } catch (error) {
+                if (error.status) throw error;
+                backendAvailable = false;
+                throw error;
+            }
+        }
+
+        function cloneProductsForStorage(list) {
+            return (Array.isArray(list) ? list : []).map((product) => ({
+                ...product,
+                quantity: 0,
+                name: {
+                    uz: product?.name?.uz || product?.name || '',
+                    ru: product?.name?.ru || product?.name || '',
+                    en: product?.name?.en || product?.name || ''
+                },
+                weight: normalizeProductWeight(product?.weight)
+            }));
+        }
+
+        function setProductsState(list) {
+            products = cloneProductsForStorage(list);
+            migrateDrinkAltPrices(products);
+            migrateProductWeights(products);
+            migrateNutWeights(products);
+        }
+
+        function areRoomsEmpty(list) {
+            return !Array.isArray(list) || list.every(room => !Array.isArray(room?.bookings) || room.bookings.length === 0);
+        }
+
+        async function persistProductsSnapshot(list) {
+            const data = await safeApiRequest('/api/products/bootstrap', {
+                method: 'POST',
+                body: { products: cloneProductsForStorage(list) }
+            });
+            return Array.isArray(data.products) ? data.products : [];
+        }
+
+        async function loadProductsData() {
+            const localProducts = Array.isArray(savedProducts) && savedProducts.length ? savedProducts : defaultProducts;
+            try {
+                let data = await safeApiRequest('/api/products');
+                let backendProducts = Array.isArray(data.products) ? data.products : [];
+                if (!backendProducts.length) {
+                    backendProducts = await persistProductsSnapshot(localProducts);
+                }
+                setProductsState(backendProducts.length ? backendProducts : localProducts);
+                localStorage.setItem('products', JSON.stringify(products));
+            } catch (error) {
+                setProductsState(localProducts);
+                if (!Array.isArray(savedProducts)) localStorage.setItem('products', JSON.stringify(products));
+            }
+        }
+
+        async function loadRoomsData() {
+            const localRooms = normalizeRooms(readJSONFromLocalStorage('rooms'));
+            try {
+                let data = await safeApiRequest('/api/rooms');
+                let backendRooms = normalizeRooms(data.rooms);
+                if (areRoomsEmpty(backendRooms) && !areRoomsEmpty(localRooms)) {
+                    const seeded = await safeApiRequest('/api/rooms/bootstrap', {
+                        method: 'POST',
+                        body: { rooms: localRooms }
+                    });
+                    backendRooms = normalizeRooms(seeded.rooms);
+                }
+                rooms = backendRooms;
+                localStorage.setItem('rooms', JSON.stringify(rooms));
+            } catch (error) {
+                rooms = localRooms;
+            }
+        }
+
+        async function loadOrdersData() {
+            const localOrders = readJSONFromLocalStorage('orders', []) || [];
+            if (!currentUser) {
+                orders = localOrders;
+                return;
+            }
+            try {
+                if (currentUser.isAdmin && localOrders.length > 0) {
+                    const allOrders = await safeApiRequest('/api/orders');
+                    const backendOrders = Array.isArray(allOrders.orders) ? allOrders.orders : [];
+                    if (!backendOrders.length) {
+                        await safeApiRequest('/api/orders/bootstrap', {
+                            method: 'POST',
+                            body: { orders: localOrders }
+                        });
+                    }
+                }
+                const endpoint = currentUser.isAdmin ? '/api/orders' : '/api/orders/mine';
+                const data = await safeApiRequest(endpoint);
+                orders = Array.isArray(data.orders) ? data.orders : [];
+                localStorage.setItem('orders', JSON.stringify(orders));
+            } catch (error) {
+                orders = localOrders;
+            }
+        }
+
+        function upsertUserCache(user) {
+            if (!user || !user.id) return;
+            const normalizedUser = { ...user };
+            const index = users.findIndex((item) => item.id === normalizedUser.id);
+            if (index === -1) users.push(normalizedUser);
+            else users[index] = { ...users[index], ...normalizedUser };
+            localStorage.setItem('users', JSON.stringify(users));
+        }
+
+        function setCurrentUserState(user) {
+            currentUser = user ? { ...user } : null;
+            if (currentUser) {
+                upsertUserCache(currentUser);
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+            } else {
+                localStorage.removeItem('currentUser');
+            }
+        }
+
+        async function restoreBackendSession() {
+            const token = getAuthToken();
+            if (!token) {
+                setCurrentUserState(null);
+                return;
+            }
+
+            try {
+                const data = await apiRequest('/api/auth/me');
+                setCurrentUserState(data.user || null);
+            } catch (error) {
+                setAuthToken('');
+                setCurrentUserState(null);
             }
         }
 
@@ -337,9 +619,7 @@
                 });
                 if (room.bookings.length !== before) updated = true;
             });
-            if (updated) {
-                localStorage.setItem('rooms', JSON.stringify(rooms));
-            }
+            if (updated) localStorage.setItem('rooms', JSON.stringify(rooms));
             return updated;
         }
 
@@ -476,7 +756,7 @@
                 courierPrice: "+20,000 so'm", backToCartBtn: "← Savatchaga qaytish",
                 checkoutTitle: "Rasmiylashtirish", nameLabel: "Ismingiz *", phoneLabel: "Telefon raqam *",
                 phoneHelp: "+998 ni o'chirib bo'lmaydi, avtomatik formatlanadi", addressLabel: "Manzil *",
-                addressHelp: "\"Namangan,\" oldindan yozilgan, o'chirib bo'lmaydi", noteLabel: "Eslatma (ixtiyoriy)",
+                addressHelp: "\"Namangan,\" oldindan yozilgan, manzil kamida 18 ta belgidan iborat bo'lsin", addressRequiredError: "Iltimos, manzilingizni kiriting", addressLengthError: "Manzil kamida 18 ta belgidan iborat bo'lishi kerak", noteLabel: "Eslatma (ixtiyoriy)",
                 promoLabel: "Promokod", submitOrderBtn: "BUYURTMANI YAKUNLASH", aboutTitle: "Biz haqimizda",
                 aboutText1: "AHMADBEK majmuasi — 2020", aboutCloseBtn: "YOPISH", footerText: "AHMADBEK majmuasi © 2020 | 171+ taom",
                 footerCopyright: "Barcha huquqlar himoyalangan © 2020", mobileProfileText: "Profil", mobileOrdersText: "Buyurtmalarim",
@@ -601,7 +881,7 @@
                 step1: "1. КОРЗИНА", step2: "2. ОФОРМЛЕНИЕ", courierLabel: "🚚 Доставка курьером",
                 courierPrice: "+20,000 сум", backToCartBtn: "← Вернуться в корзину", checkoutTitle: "Оформление",
                 nameLabel: "Ваше имя *", phoneLabel: "Номер телефона *", phoneHelp: "+998 нельзя удалить, форматируется автоматически",
-                addressLabel: "Адрес *", addressHelp: "Наманган, нельзя удалить", noteLabel: "Примечание (необязательно)",
+                addressLabel: "Адрес *", addressHelp: "\"Наманган,\" задан заранее, адрес должен содержать минимум 18 символов", addressRequiredError: "Пожалуйста, введите адрес", addressLengthError: "Адрес должен содержать минимум 18 символов", noteLabel: "Примечание (необязательно)",
                 promoLabel: "Промокод", submitOrderBtn: "ЗАВЕРШИТЬ ЗАКАЗ", aboutTitle: "О нас",
                 aboutText1: "AHMADBEK majmuasi — 2020", aboutCloseBtn: "ЗАКРЫТЬ", footerText: "AHMADBEK majmuasi © 2020 | 171+ блюд",
                 footerCopyright: "Все права защищены © 2020", mobileProfileText: "Профиль", mobileOrdersText: "Мои заказы",
@@ -727,7 +1007,7 @@
                 step1: "1. CART", step2: "2. CHECKOUT", courierLabel: "🚚 Courier delivery",
                 courierPrice: "+20,000 sum", backToCartBtn: "← Back to cart", checkoutTitle: "Checkout",
                 nameLabel: "Your name *", phoneLabel: "Phone number *", phoneHelp: "+998 cannot be removed, auto-formatted",
-                addressLabel: "Address *", addressHelp: "Namangan, cannot be removed", noteLabel: "Note (optional)",
+                addressLabel: "Address *", addressHelp: "\"Namangan,\" is prefilled, address must be at least 18 characters", addressRequiredError: "Please enter your address", addressLengthError: "Address must be at least 18 characters long", noteLabel: "Note (optional)",
                 promoLabel: "Promo code", submitOrderBtn: "PLACE ORDER", aboutTitle: "About Us",
                 aboutText1: "AHMADBEK majmuasi — 2020", aboutCloseBtn: "CLOSE", footerText: "AHMADBEK majmuasi © 2020 | 171+ dishes",
                 footerCopyright: "All rights reserved © 2020", mobileProfileText: "Profile", mobileOrdersText: "My orders",
@@ -1096,6 +1376,7 @@
             }
 
             selectedMapLocation = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
+            validateAddress(false);
             showNotification(d.mapSelectedTitle, d.mapSelectedMsg, "success");
             closeMapModal();
             refreshCheckoutAddressSection();
@@ -1170,22 +1451,28 @@
             else { btns[0].classList.remove('active'); btns[1].classList.add('active'); login.style.display = 'none'; reg.style.display = 'block'; }
         }
 
-        function loginUser() {
+        async function loginUser() {
             const d = langData[currentLang];
             const phone = document.getElementById('loginPhone').value.trim();
             const password = document.getElementById('loginPassword').value.trim();
             if (!isValidUzbekPhone(phone)) { alert("❌ Noto'g'ri telefon raqam!"); return; }
             if (!password) { alert("Parolni kiriting!"); return; }
-            const user = users.find(u => u.phone === phone && u.password === password);
-            if (!user) { alert("Telefon raqam yoki parol noto'g'ri!"); return; }
-            if (user.blocked) { alert("Sizning akkauntingiz bloklangan!"); return; }
-            currentUser = user;
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            updateProfileDropdown(); updateCheckoutForm(); displayProducts(currentCategory); displayMyOrders(); closeProfileDropdown();
-            showNotification(d.notificationLoginSuccess, d.notificationLoginMessage, "success");
+            try {
+                const data = await apiRequest('/api/auth/login', {
+                    method: 'POST',
+                    body: { phone, password }
+                });
+                setAuthToken(data.token || '');
+                setCurrentUserState(data.user || null);
+                await loadOrdersData();
+                updateProfileDropdown(); updateCheckoutForm(); displayProducts(currentCategory); displayMyOrders(); closeProfileDropdown();
+                showNotification(d.notificationLoginSuccess, d.notificationLoginMessage, "success");
+            } catch (error) {
+                alert(error.message || "Telefon raqam yoki parol noto'g'ri!");
+            }
         }
 
-        function registerUser() {
+        async function registerUser() {
             const d = langData[currentLang];
             const name = document.getElementById('regName').value.trim();
             const phone = document.getElementById('regPhone').value.trim();
@@ -1195,23 +1482,28 @@
             if (!isValidUzbekPhone(phone)) { alert("❌ Noto'g'ri telefon raqam!"); return; }
             if (!password || password.length < 4) { alert("Parol kamida 4 belgi!"); return; }
             if (password !== confirmPassword) { alert("Parollar mos kelmadi!"); return; }
-            if (users.some(u => u.phone === phone)) {
-                showNotification(d.notificationPhoneExists, d.notificationPhoneExistsMsg, "danger");
-                return;
+            try {
+                const data = await apiRequest('/api/auth/register', {
+                    method: 'POST',
+                    body: { name, phone, password }
+                });
+                setAuthToken(data.token || '');
+                setCurrentUserState(data.user || null);
+                await loadOrdersData();
+                updateProfileDropdown(); updateCheckoutForm(); displayProducts(currentCategory); closeProfileDropdown();
+                showNotification(d.notificationRegisterSuccess, d.notificationRegisterMessage, "success");
+            } catch (error) {
+                if (error.status === 409) showNotification(d.notificationPhoneExists, d.notificationPhoneExistsMsg, "danger");
+                else alert(error.message || "Ro'yxatdan o'tishda xato!");
             }
-            const newUser = { id: Date.now(), name, phone, password, avatar: "https://via.placeholder.com/60", blocked: false, maxOrder: 100, isAdmin: false };
-            users.push(newUser);
-            localStorage.setItem('users', JSON.stringify(users));
-            currentUser = newUser;
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            updateProfileDropdown(); updateCheckoutForm(); displayProducts(currentCategory); closeProfileDropdown();
-            showNotification(d.notificationRegisterSuccess, d.notificationRegisterMessage, "success");
         }
 
-        function logoutUser() {
+        async function logoutUser() {
             const d = langData[currentLang];
-            currentUser = null;
-            localStorage.removeItem('currentUser');
+            try { await apiRequest('/api/auth/logout', { method: 'POST' }); } catch { }
+            setAuthToken('');
+            setCurrentUserState(null);
+            orders = readJSONFromLocalStorage('orders', []) || [];
             localStorage.removeItem('cartState');
             products.forEach(p => p.quantity = 0);
             cart = [];
@@ -1235,7 +1527,7 @@
             }
             document.getElementById('profileNotLoggedIn').style.display = 'none';
             document.getElementById('profileLoggedIn').style.display = 'block';
-            const userData = users.find(u => u.id === currentUser.id) || currentUser;
+            const userData = currentUser;
             document.getElementById('profileFullName').innerText = userData.name;
             document.getElementById('profilePhoneDisplay').innerText = userData.phone;
             document.getElementById('profileNameInput').value = userData.name;
@@ -1249,33 +1541,41 @@
             updateLoginRequiredMessage();
         }
 
-        function updateProfile() {
+        async function updateProfile() {
             const d = langData[currentLang];
             if (!currentUser) return;
             const name = document.getElementById('profileNameInput').value.trim();
             const phone = document.getElementById('profilePhoneInput').value.trim();
             if (!name) { alert("Ismni kiriting!"); return; }
             if (!isValidUzbekPhone(phone)) { alert("❌ Noto'g'ri telefon raqam!"); return; }
-            currentUser.name = name;
-            currentUser.phone = phone;
-            const idx = users.findIndex(u => u.id === currentUser.id);
-            if (idx !== -1) { users[idx].name = name; users[idx].phone = phone; }
-            localStorage.setItem('users', JSON.stringify(users));
-            localStorage.setItem('currentUser', JSON.stringify(currentUser));
-            updateProfileDropdown();
-            showNotification(d.notificationProfileSaved, d.notificationProfileSavedMsg, "success");
+            try {
+                const data = await apiRequest('/api/auth/me', {
+                    method: 'PATCH',
+                    body: { name, phone }
+                });
+                setCurrentUserState(data.user || currentUser);
+                updateProfileDropdown();
+                showNotification(d.notificationProfileSaved, d.notificationProfileSavedMsg, "success");
+            } catch (error) {
+                if (error.status === 409) showNotification(d.notificationPhoneExists, d.notificationPhoneExistsMsg, "danger");
+                else alert(error.message || "Profilni saqlashda xato!");
+            }
         }
 
-        function changeProfilePicture() {
+        async function changeProfilePicture() {
             if (!currentUser) return;
             const url = prompt("Rasm URL:", currentUser.avatar);
             if (url) {
-                currentUser.avatar = url;
-                const idx = users.findIndex(u => u.id === currentUser.id);
-                if (idx !== -1) users[idx].avatar = url;
-                localStorage.setItem('users', JSON.stringify(users));
-                localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                updateProfileDropdown();
+                try {
+                    const data = await apiRequest('/api/auth/me', {
+                        method: 'PATCH',
+                        body: { name: currentUser.name, phone: currentUser.phone, avatar: url }
+                    });
+                    setCurrentUserState(data.user || currentUser);
+                    updateProfileDropdown();
+                } catch (error) {
+                    alert(error.message || "Avatarni saqlashda xato!");
+                }
             }
         }
 
@@ -1290,7 +1590,7 @@
             const msg = document.getElementById('loginRequiredMessage'), btn = document.getElementById('checkoutBtn');
             if (!currentUser) { msg.style.display = 'block'; if (btn) btn.disabled = true; }
             else {
-                const u = users.find(u => u.id === currentUser.id);
+                const u = currentUser;
                 if (u && u.blocked) { msg.style.display = 'block'; if (btn) btn.disabled = true; }
                 else { msg.style.display = 'none'; if (btn) btn.disabled = false; }
             }
@@ -1365,7 +1665,7 @@
             { id: "70", cat: "yevropa", name: { uz: "Ilik", ru: "Илик", en: "İlik" }, weight: "300g", price: 83000, img: "Menyu/ilik.png", quantity: 0 },
             { id: "71", cat: "yevropa", name: { uz: "Baqlajonli go'sht", ru: "Мясо с баклажанами", en: "Patlıcanlı Et Sote" }, weight: "350g", price: 49800, img: "Menyu/baqlajonli_gosht.png", quantity: 0 },
             { id: "72", cat: "yevropa", name: { uz: "Tovuqli frikase", ru: "Фрикасе из курицы с грибами", en: "Mantarlı Tavuk Frikase" }, weight: "350g", price: 72500, img: "Menyu/tovuqli_frikase.png", quantity: 0 },
-            { id: "73", cat: "yevropa", name: { uz: "Tovuq va qo'ziqorin", ru: "Курица с грибами", en: "Mantarlı tavuk" }, weight: "350g", price: 42000, img: "Menyu/tovuq va qoziqorin.png", quantity: 0 },
+            { id: "73", cat: "yevropa", name: { uz: "Tovuq va qo'ziqorin", ru: "Курица с грибами", en: "Mantarlı tavuk" }, weight: "350g", price: 42000, img: "Menyu/tovuq_va_qoziqorin.jpg", quantity: 0 },
             { id: "74", cat: "yevropa", name: { uz: "Go'sht donar", ru: "Донер", en: "Et doner" }, weight: "350g", price: 85000, img: "Menyu/donar.png", quantity: 0 },
             { id: "75", cat: "yevropa", name: { uz: "Iskander", ru: "Искандер", en: "Iskander" }, weight: "350g", price: 76000, img: "Menyu/iskandar.png", quantity: 0 },
             { id: "76", cat: "yevropa", name: { uz: "Oyoqcha", ru: "Ножка", en: "Oyoqcha" }, weight: "250g", price: 89700, img: "Menyu/oyoqcha.png", quantity: 0 },
@@ -1490,9 +1790,9 @@
             { id: "185", cat: "shirinlik", name: { uz: "Sirniy", ru: "Сырный", en: "Cheese cake" }, weight: "150g", price: 26500, img: "Menyu/chees.png", quantity: 0 },
             { id: "186", cat: "shirinlik", name: { uz: "Desert fruktoviy", ru: "Десерт фруктовый", en: "Fruit dessert" }, weight: "200g", price: 30000, img: "Menyu/Desert_fruktoviy.png", quantity: 0 },
             { id: "187", cat: "shirinlik", name: { uz: "Vafli", ru: "Вафли", en: "Waffles" }, weight: "150g", price: 36000, img: "Menyu/vafli.png", quantity: 0 },
-            { id: "188", cat: "shirinlik", name: { uz: "Pista (1 dona)", ru: "Фисташки (1 порция)", en: "Pistachio" }, weight: "50g", price: 30000, img: "Menyu/pista.jpg", quantity: 0 },
-            { id: "189", cat: "shirinlik", name: { uz: "Bodom (1 dona)", ru: "Миндаль (1 порция)", en: "Almond" }, weight: "50g", price: 23000, img: "Menyu/bodom.jpg", quantity: 0 },
-            { id: "190", cat: "shirinlik", name: { uz: "Konfet (1 dona)", ru: "Конфеты (1 порция)", en: "Candy / Sweets" }, weight: "50g", price: 23200, img: "Menyu/konfet.jpg", quantity: 0 }
+            { id: "188", cat: "shirinlik", name: { uz: "Pista (1 dona)", ru: "Фисташки (1 порция)", en: "Pistachio" }, weight: { uz: "1 kg", ru: "1 кг", en: "1 kg" }, price: 30000, img: "Menyu/pista.jpg", quantity: 0 },
+            { id: "189", cat: "shirinlik", name: { uz: "Bodom (1 dona)", ru: "Миндаль (1 порция)", en: "Almond" }, weight: { uz: "1 kg", ru: "1 кг", en: "1 kg" }, price: 23000, img: "Menyu/bodom.jpg", quantity: 0 },
+            { id: "190", cat: "shirinlik", name: { uz: "Konfet (1 dona)", ru: "Конфеты (1 порция)", en: "Candy / Sweets" }, weight: { uz: "1 kg", ru: "1 кг", en: "1 kg" }, price: 23200, img: "Menyu/konfet.jpg", quantity: 0 }
         ];
 
         const savedProducts = readJSONFromLocalStorage('products');
@@ -1529,9 +1829,42 @@
             return changed;
         }
 
-        if (Array.isArray(savedProducts)) products = savedProducts;
-        else { products = defaultProducts; localStorage.setItem('products', JSON.stringify(products)); }
-        if (migrateDrinkAltPrices(products)) localStorage.setItem('products', JSON.stringify(products));
+        function migrateProductWeights(list) {
+            if (!Array.isArray(list)) return false;
+            let changed = false;
+            list.forEach((p) => {
+                if (!p) return;
+                const normalized = normalizeProductWeight(p.weight);
+                if (JSON.stringify(p.weight) === JSON.stringify(normalized)) return;
+                p.weight = normalized;
+                changed = true;
+            });
+            return changed;
+        }
+
+        function migrateNutWeights(list) {
+            if (!Array.isArray(list)) return false;
+            const targetIds = new Set(['188', '189', '190']);
+            let changed = false;
+            list.forEach((p) => {
+                if (!p || !targetIds.has(String(p.id))) return;
+                const targetWeight = { uz: '1 kg', ru: '1 кг', en: '1 kg' };
+                if (JSON.stringify(normalizeProductWeight(p.weight)) === JSON.stringify(targetWeight)) return;
+                p.weight = targetWeight;
+                changed = true;
+            });
+            return changed;
+        }
+
+        if (Array.isArray(savedProducts)) products = cloneProductsForStorage(savedProducts);
+        else {
+            products = cloneProductsForStorage(defaultProducts);
+            localStorage.setItem('products', JSON.stringify(products));
+        }
+        const didMigrateDrinkPrices = migrateDrinkAltPrices(products);
+        const didMigrateProductWeights = migrateProductWeights(products);
+        const didMigrateNutWeights = migrateNutWeights(products);
+        if (didMigrateDrinkPrices || didMigrateProductWeights || didMigrateNutWeights) localStorage.setItem('products', JSON.stringify(products));
         // ==================== ASOSIY FUNKSIYALAR ====================
         function toggleRoomsPanel() {
             let p = document.getElementById('roomsPanel');
@@ -1554,8 +1887,51 @@
 	            if (document.getElementById('myOrdersPanel').classList.contains('active')) displayMyOrders();
 	        }
 
+        let adminPanelAltShiftAEnabled = false;
+
         function toggleAdminPanel() {
             document.getElementById('adminPanel').classList.toggle('active');
+        }
+
+        function armAdminPanelHotkey(event) {
+            event?.stopPropagation();
+            adminPanelAltShiftAEnabled = true;
+        }
+
+        function setAddressError(message = '') {
+            const addressError = document.getElementById('addressError');
+            const addressInput = document.getElementById('addressInput');
+            if (!addressError || !addressInput) return;
+
+            const hasError = Boolean(message);
+            addressError.textContent = message;
+            addressError.style.display = hasError ? 'block' : 'none';
+            addressInput.style.borderColor = hasError ? 'var(--danger)' : 'var(--primary)';
+        }
+
+        function validateAddress(showError = true) {
+            const d = langData[currentLang] || langData.uz;
+            const addressInput = document.getElementById('addressInput');
+            const courierSelected = document.getElementById('courierDelivery')?.checked;
+            if (!addressInput || !courierSelected) {
+                if (showError) setAddressError('');
+                return true;
+            }
+
+            const rawValue = addressInput.value || '';
+            const trimmedValue = rawValue.trim();
+            const hasOnlyPrefix = trimmedValue === ADDRESS_PREFIX.trim();
+            const isTooShort = trimmedValue.length < MIN_ADDRESS_LENGTH;
+            let errorMessage = '';
+
+            if (!trimmedValue || hasOnlyPrefix) {
+                errorMessage = d.addressRequiredError || "Iltimos, manzilingizni kiriting";
+            } else if (isTooShort) {
+                errorMessage = d.addressLengthError || "Manzil kamida 18 ta belgidan iborat bo'lishi kerak";
+            }
+
+            if (showError) setAddressError(errorMessage);
+            return !errorMessage;
         }
 
         function togglePanel(id) {
@@ -1827,8 +2203,17 @@
                 createdAt: new Date().toISOString()
             });
             if (!booking) return;
-            room.bookings.push(booking);
-            localStorage.setItem('rooms', JSON.stringify(rooms));
+            try {
+                const data = await safeApiRequest(`/api/rooms/${selectedRoomId}/bookings`, {
+                    method: 'POST',
+                    body: { booking }
+                });
+                rooms = normalizeRooms(data.rooms);
+                localStorage.setItem('rooms', JSON.stringify(rooms));
+            } catch (error) {
+                room.bookings.push(booking);
+                localStorage.setItem('rooms', JSON.stringify(rooms));
+            }
             displayRooms();
             document.getElementById('roomsBookingForm').style.display = 'none';
             alert(`${d.roomBookingSuccess} ${room.number}`);
@@ -1839,13 +2224,20 @@
 👤 Ism: ${booking.name || '—'}
 📞 Telefon: ${booking.phone}
 📅 Kun: ${formatDisplayDate(booking.date)}
-⏰ Vaqt: ${booking.startTime} - ${booking.endTime}`;
+            ⏰ Vaqt: ${booking.startTime} - ${booking.endTime}`;
             await sendTelegramMessage(message);
         }
-        function adminCancelBooking(roomId, bookingId) {
+        async function adminCancelBooking(roomId, bookingId) {
             const room = rooms.find(r => r.id === roomId);
             if (!room) return;
-            room.bookings = room.bookings.filter(b => b.id !== bookingId);
+            try {
+                const data = await safeApiRequest(`/api/rooms/${roomId}/bookings/${encodeURIComponent(bookingId)}`, {
+                    method: 'DELETE'
+                });
+                rooms = normalizeRooms(data.rooms);
+            } catch (error) {
+                room.bookings = room.bookings.filter(b => b.id !== bookingId);
+            }
             localStorage.setItem('rooms', JSON.stringify(rooms));
             displayRooms();
         }
@@ -1918,11 +2310,12 @@
                         const imgCandidates = getProductImageCandidates(p);
                         const imgFallbacks = encodeURIComponent(JSON.stringify(imgCandidates));
                         const priceText = formatProductPriceText(p, d);
+                        const isPriorityImage = category === 'all' ? filtered.indexOf(p) < 6 : catProducts.indexOf(p) < 4;
                         catHtml += `<div class="card" id="card-${p.id}">
                                     <button class="goto-btn" onclick="goToProduct('${p.id}')"><i class="fas fa-arrow-right"></i></button>
-                                    <img src="${imgCandidates[0]}" data-fallbacks="${imgFallbacks}" data-fallback-index="0" onerror="handleProductImgError(this)">
+                                    <img src="${imgCandidates[0]}" data-fallbacks="${imgFallbacks}" data-fallback-index="0" onerror="handleProductImgError(this)" loading="${isPriorityImage ? 'eager' : 'lazy'}" decoding="async" fetchpriority="${isPriorityImage ? 'high' : 'low'}" alt="${escapeHtml(currentName)}">
                                     <h3>${currentName}</h3>
-                                    <div class="product-weight">${p.weight}</div>
+                                    <div class="product-weight">${getLocalizedWeightText(p.weight, currentLang)}</div>
                                     <div class="price">${priceText}</div>
                                     <div class="quantity-controls">
                                         <button class="qty-btn minus" onclick="decreaseQuantity('${p.id}')">−</button>
@@ -1946,6 +2339,7 @@
                 });
             }, { threshold: 0.05 });
             document.querySelectorAll('.category-section').forEach(s => scrollObserver.observe(s));
+            warmProductImages(grid);
         }
 
 	        function increaseQuantity(productId) {
@@ -1956,7 +2350,7 @@
 	                alert(d.loginRequiredMessageText);
 	                return;
 	            }
-            const userData = users.find(u => u.id === currentUser.id);
+            const userData = currentUser;
             if (userData && userData.blocked) { alert("Akkaunt bloklangan!"); return; }
             const product = products.find(p => p.id === productId);
             if (product) {
@@ -1970,7 +2364,7 @@
                 document.getElementById(`qty-${productId}`).textContent = product.quantity;
                 const cartItem = cart.find(item => item.id === productId);
                 if (cartItem) cartItem.quantity = product.quantity;
-                else cart.push({ id: product.id, name: product.name, price: product.price, weight: product.weight, quantity: product.quantity });
+                else cart.push({ id: product.id, name: product.name, price: product.price, weight: normalizeProductWeight(product.weight), quantity: product.quantity });
                 updateCart();
                 const productName = product.name[currentLang] || product.name.uz || product.name;
                 showNotification(d.notificationProductAdded, `${productName} ${d.productAddedMsg}`, 'success');
@@ -2010,7 +2404,7 @@
                 list.innerHTML += `<div style="display:flex;justify-content:space-between;margin-bottom:15px;border-bottom:1px solid rgba(74,144,226,0.2);padding-bottom:10px;">
                                     <div>
                                         <b>${currentName}</b>
-                                        <div style="font-size:12px;">${item.weight} | ${item.price.toLocaleString()} ${d.currency}</div>
+                                        <div style="font-size:12px;">${getLocalizedWeightText(item.weight, currentLang)} | ${item.price.toLocaleString()} ${d.currency}</div>
                                     </div>
                                     <div>
                                         <div style="display:flex;gap:5px;">
@@ -2055,7 +2449,7 @@
                 const qty = parseInt(item.quantity, 10);
                 if (!product || !isFinite(qty) || qty <= 0) return;
                 product.quantity = qty;
-                cart.push({ id: product.id, name: product.name, price: product.price, weight: product.weight, quantity: qty });
+                cart.push({ id: product.id, name: product.name, price: product.price, weight: normalizeProductWeight(product.weight), quantity: qty });
             });
             const courier = document.getElementById('courierDelivery');
             if (courier) courier.checked = Boolean(state.courier);
@@ -2067,7 +2461,7 @@
             let value = parseInt(input.value);
             const product = products.find(p => p.id === productId);
             if (isNaN(value) || value < 0) value = 0;
-            const maxOrder = users.find(u => u.id === currentUser.id)?.maxOrder || 100;
+            const maxOrder = currentUser?.maxOrder || 100;
             if (value > maxOrder) value = maxOrder;
             const oldQuantity = product.quantity;
             product.quantity = value;
@@ -2075,7 +2469,7 @@
             if (value > 0) {
                 const cartItem = cart.find(item => item.id === productId);
                 if (cartItem) cartItem.quantity = value;
-                else cart.push({ id: product.id, name: product.name, price: product.price, weight: product.weight, quantity: value });
+                else cart.push({ id: product.id, name: product.name, price: product.price, weight: normalizeProductWeight(product.weight), quantity: value });
             } else {
                 const idx = cart.findIndex(item => item.id === productId);
                 if (idx !== -1) cart.splice(idx, 1);
@@ -2126,7 +2520,7 @@
                 total += itemTotal;
                 const n = item.name[currentLang] || item.name.uz || item.name;
                 html += `<div class="summary-item">
-                        <span>${n} x${item.quantity} (${item.weight})</span>
+                        <span>${n} x${item.quantity} (${getLocalizedWeightText(item.weight, currentLang)})</span>
                         <span>${itemTotal.toLocaleString()} ${d.currency}</span>
                     </div>`;
             });
@@ -2151,6 +2545,7 @@
             const courierSelected = document.getElementById('courierDelivery')?.checked;
             section.style.display = courierSelected ? 'block' : 'none';
             document.getElementById('addressInput').required = Boolean(courierSelected);
+            if (!courierSelected) setAddressError('');
         }
 
         async function submitOrder() {
@@ -2161,7 +2556,8 @@
             const address = document.getElementById('addressInput').value.trim();
             const note = document.getElementById('noteInput').value.trim();
             const courier = document.getElementById('courierDelivery').checked;
-            if (!name || !isValidUzbekPhone(phone) || (courier && !address)) {
+            const validAddress = validateAddress(true);
+            if (!name || !isValidUzbekPhone(phone) || (courier && !validAddress)) {
                 alert("❌ Barcha majburiy maydonlarni to'ldiring!");
                 return;
             }
@@ -2169,7 +2565,7 @@
             let total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
             if (courier) total += COURIER_PRICE;
 
-            const order = {
+            let order = {
                 id: generateOrderId(),
                 orderTime: new Date().toISOString(),
                 status: 'preparing',
@@ -2182,7 +2578,7 @@
                 mapUrl: courier ? (selectedMapLocation || '') : '',
                 items: cart.map(item => ({
                     name: item.name[currentLang] || item.name.uz || item.name,
-                    weight: item.weight,
+                    weight: normalizeProductWeight(item.weight),
                     quantity: item.quantity,
                     price: item.price,
                     total: item.price * item.quantity
@@ -2190,7 +2586,16 @@
                 total: total
             };
 
-            orders.push(order);
+            try {
+                const data = await safeApiRequest('/api/orders', {
+                    method: 'POST',
+                    body: { order }
+                });
+                order = data.order || order;
+            } catch (error) {
+                orders.push(order);
+            }
+            if (!orders.some(existing => String(existing.id) === String(order.id))) orders.push(order);
             localStorage.setItem('orders', JSON.stringify(orders));
 
             // Telegramga xabar yuborish
@@ -2206,7 +2611,7 @@
             orderText += `📝 Eslatma: ${noteText}\n\n`;
             orderText += `📦 Buyurtmalar:\n`;
             order.items.forEach(item => {
-                orderText += `   • ${item.name} ${item.weight} x${item.quantity} = ${(item.price * item.quantity).toLocaleString()} so'm\n`;
+                orderText += `   • ${item.name} ${getLocalizedWeightText(item.weight, currentLang)} x${item.quantity} = ${(item.price * item.quantity).toLocaleString()} so'm\n`;
             });
             orderText += `\n💰 JAMI: ${total.toLocaleString()} so'm`;
 
@@ -2215,7 +2620,8 @@
             products.forEach(p => p.quantity = 0);
             cart = [];
             updateCart();
-            document.getElementById('addressInput').value = 'Namangan, ';
+            document.getElementById('addressInput').value = ADDRESS_PREFIX;
+            setAddressError('');
             document.getElementById('noteInput').value = '';
             document.getElementById('courierDelivery').checked = false;
             selectedMapLocation = null;
@@ -2266,10 +2672,13 @@
         // ==================== ADMIN FUNKSIYALARI ====================
         function handleAdminKeyPress(e) { if (e.key === 'Enter') checkAdminPassword(); }
 
-        function checkAdminPassword() {
+        async function checkAdminPassword() {
             let pwd = document.getElementById('adminPassword').value;
             if (pwd === "12345566") {
                 isAdminLoggedIn = true;
+                if (currentUser?.isAdmin) {
+                    await Promise.all([loadProductsData(), loadRoomsData(), loadOrdersData()]);
+                }
                 document.getElementById('adminLogin').style.display = 'none';
                 document.getElementById('adminContent').style.display = 'block';
                 updateAdminStats();
@@ -2331,9 +2740,14 @@
             list.innerHTML = html;
         }
 
-        function deleteOrder(id) {
+        async function deleteOrder(id) {
             if (confirm("O'chirilsinmi?")) {
-                orders = orders.filter(o => o.id !== id);
+                try {
+                    const data = await safeApiRequest(`/api/orders/${id}`, { method: 'DELETE' });
+                    orders = Array.isArray(data.orders) ? data.orders : orders.filter(o => o.id !== id);
+                } catch (error) {
+                    orders = orders.filter(o => o.id !== id);
+                }
                 localStorage.setItem('orders', JSON.stringify(orders));
                 displayOrders();
                 updateAdminStats();
@@ -2445,9 +2859,25 @@
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.altKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+            const key = (e.key || '').toLowerCase();
+            if (e.altKey && e.shiftKey && key === 'd') {
                 e.preventDefault();
                 assignAdminByHotkey();
+                return;
+            }
+
+            if (e.altKey && e.shiftKey && key === 'x') {
+                e.preventDefault();
+                const adminPanel = document.getElementById('adminPanel');
+                if (adminPanel && !adminPanel.classList.contains('active')) toggleAdminPanel();
+                return;
+            }
+
+            if (e.altKey && e.shiftKey && key === 'a' && adminPanelAltShiftAEnabled) {
+                e.preventDefault();
+                const adminPanel = document.getElementById('adminPanel');
+                if (adminPanel && !adminPanel.classList.contains('active')) toggleAdminPanel();
+                adminPanelAltShiftAEnabled = false;
             }
         });
 
@@ -2565,7 +2995,7 @@
                 const imgCandidates = getProductImageCandidates(p);
                 const imgFallbacks = encodeURIComponent(JSON.stringify(imgCandidates));
                 grid.innerHTML += `<div class="product-edit-card">
-                <img src="${imgCandidates[0]}" data-fallbacks="${imgFallbacks}" data-fallback-index="0" onerror="handleProductImgError(this)" onclick="changeProductImage('${p.id}')" style="width:100%; height:140px; object-fit:cover; cursor:pointer;">
+                <img src="${imgCandidates[0]}" data-fallbacks="${imgFallbacks}" data-fallback-index="0" onerror="handleProductImgError(this)" onclick="changeProductImage('${p.id}')" loading="lazy" decoding="async" fetchpriority="low" alt="${this.escapeHtml(nameUz)}" style="width:100%; height:140px; object-fit:cover; cursor:pointer;">
                 <div style="display:flex; gap:10px; margin: 10px 0;">
                     <input type="file" id="img_upload_${p.id}" accept="image/*" style="display:none;" onchange="uploadExistingProductImage('${p.id}', this)">
                     <button type="button" class="image-upload-btn" onclick="document.getElementById('img_upload_${p.id}').click()">📁 Yuklash</button>
@@ -2577,7 +3007,12 @@
                 <input type="text" value="${this.escapeHtml(nameRu)}" id="name_ru_${p.id}" placeholder="Русское название" style="width:100%; margin-bottom:5px;"></div>
                 <div><label style="color:var(--primary); font-size:12px;">🇬🇧 English:</label>
                 <input type="text" value="${this.escapeHtml(nameEn)}" id="name_en_${p.id}" placeholder="English name" style="width:100%; margin-bottom:5px;"></div>
-                <input type="text" value="${p.weight}" id="weight-${p.id}" placeholder="Miqdori" style="width:100%; margin-bottom:5px;">
+                <div><label style="color:var(--primary); font-size:12px;">🇺🇿 Weight:</label>
+                <input type="text" value="${this.escapeHtml(getLocalizedWeightText(p.weight, 'uz'))}" id="weight_uz_${p.id}" placeholder="1 Dona" style="width:100%; margin-bottom:5px;"></div>
+                <div><label style="color:var(--primary); font-size:12px;">🇷🇺 Weight:</label>
+                <input type="text" value="${this.escapeHtml(getLocalizedWeightText(p.weight, 'ru'))}" id="weight_ru_${p.id}" placeholder="1 шт" style="width:100%; margin-bottom:5px;"></div>
+                <div><label style="color:var(--primary); font-size:12px;">🇬🇧 Weight:</label>
+                <input type="text" value="${this.escapeHtml(getLocalizedWeightText(p.weight, 'en'))}" id="weight_en_${p.id}" placeholder="1 pc" style="width:100%; margin-bottom:5px;"></div>
                 <select id="cat-${p.id}" style="width:100%; margin-bottom:5px;">
                     <option value="salat" ${p.cat === 'salat' ? 'selected' : ''}>${d.catSalat}</option>
                     <option value="milliy" ${p.cat === 'milliy' ? 'selected' : ''}>${d.catMilliy}</option>
@@ -2607,21 +3042,41 @@
             });
         }
 
-        function saveProductFull(productId) {
+        async function saveProductFull(productId) {
             const product = products.find(p => p.id === productId);
+            if (!product) return;
             const nameUz = document.getElementById(`name_uz_${productId}`)?.value;
             const nameRu = document.getElementById(`name_ru_${productId}`)?.value;
             const nameEn = document.getElementById(`name_en_${productId}`)?.value;
+            const weightUz = document.getElementById(`weight_uz_${productId}`)?.value.trim();
+            const weightRu = document.getElementById(`weight_ru_${productId}`)?.value.trim();
+            const weightEn = document.getElementById(`weight_en_${productId}`)?.value.trim();
             if (nameUz) product.name.uz = nameUz;
             if (nameRu) product.name.ru = nameRu;
             if (nameEn) product.name.en = nameEn;
-            product.weight = document.getElementById(`weight-${productId}`)?.value || product.weight;
+            product.weight = {
+                uz: weightUz || DEFAULT_PRODUCT_WEIGHT.uz,
+                ru: weightRu || DEFAULT_PRODUCT_WEIGHT.ru,
+                en: weightEn || DEFAULT_PRODUCT_WEIGHT.en
+            };
             product.cat = document.getElementById(`cat-${productId}`)?.value || product.cat;
             product.price = parseInt(document.getElementById(`price-${productId}`)?.value) || product.price;
             const p2raw = document.getElementById(`price2-${productId}`)?.value;
             const p2 = parseInt(String(p2raw ?? '').trim(), 10);
             if (Number.isFinite(p2) && p2 > 0) product.price2 = p2;
             else delete product.price2;
+            try {
+                const data = await safeApiRequest(`/api/products/${encodeURIComponent(productId)}`, {
+                    method: 'PATCH',
+                    body: { product }
+                });
+                if (data.product) {
+                    const idx = products.findIndex(p => p.id === productId);
+                    if (idx !== -1) products[idx] = { ...data.product, quantity: products[idx].quantity || 0 };
+                }
+            } catch (error) {
+                console.warn('Product save fallback:', error);
+            }
             localStorage.setItem('products', JSON.stringify(products));
             displayProducts(currentCategory);
             displayProductsForEdit();
@@ -2651,9 +3106,16 @@
 
 
 
-        function deleteProduct(productId) {
+        async function deleteProduct(productId) {
             if (confirm("Mahsulotni o'chirilsinmi?")) {
-                products = products.filter(p => p.id !== productId);
+                try {
+                    const data = await safeApiRequest(`/api/products/${encodeURIComponent(productId)}`, {
+                        method: 'DELETE'
+                    });
+                    products = Array.isArray(data.products) ? cloneProductsForStorage(data.products) : products.filter(p => p.id !== productId);
+                } catch (error) {
+                    products = products.filter(p => p.id !== productId);
+                }
                 localStorage.setItem('products', JSON.stringify(products));
                 displayProducts(currentCategory);
                 displayProductsForEdit();
@@ -2661,7 +3123,7 @@
             }
         }
 
-        function addNewProductFull() {
+        async function addNewProductFull() {
             const nameUz = document.getElementById('newProductName')?.value.trim();
             const nameRu = document.getElementById('newProductNameRu')?.value.trim();
             const nameEn = document.getElementById('newProductNameEn')?.value.trim();
@@ -2678,12 +3140,20 @@
                 id: 'new' + Date.now(),
                 cat: cat,
                 name: { uz: nameUz, ru: nameRu || nameUz, en: nameEn || nameUz },
-                weight: weight,
+                weight: { uz: weight, ru: weight, en: weight },
                 price: price,
                 img: img,
                 quantity: 0
             };
-            products.push(newProduct);
+            try {
+                const data = await safeApiRequest('/api/products', {
+                    method: 'POST',
+                    body: { product: newProduct }
+                });
+                products.push({ ...(data.product || newProduct), quantity: 0 });
+            } catch (error) {
+                products.push(newProduct);
+            }
             localStorage.setItem('products', JSON.stringify(products));
             alert("✅ Yangi mahsulot qo'shildi!");
 
@@ -2691,7 +3161,7 @@
             document.getElementById('newProductNameRu').value = '';
             document.getElementById('newProductNameEn').value = '';
             document.getElementById('newProductPrice').value = '';
-            document.getElementById('newProductWeight').value = '250g';
+            document.getElementById('newProductWeight').value = '1 Dona';
             document.getElementById('newProductImage').value = 'Menyu/';
             displayProducts(currentCategory);
             displayProductsForEdit();
@@ -2713,21 +3183,39 @@
             displayProductsForEdit();
         }
 
-        function changeAllProductImages() {
+        async function changeAllProductImages() {
             let url = prompt("Barcha rasmlar uchun URL:");
             if (url) {
                 products.forEach(p => p.img = url);
+                try {
+                    const data = await safeApiRequest('/api/products/images', {
+                        method: 'PATCH',
+                        body: { url }
+                    });
+                    if (Array.isArray(data.products)) products = cloneProductsForStorage(data.products);
+                } catch (error) {
+                    console.warn('Bulk product image fallback:', error);
+                }
                 localStorage.setItem('products', JSON.stringify(products));
                 displayProducts(currentCategory);
                 displayProductsForEdit();
             }
         }
 
-        function changeProductImage(pid) {
+        async function changeProductImage(pid) {
             let url = prompt("Yangi rasm URL:");
             if (url) {
                 let p = products.find(p => p.id === pid);
                 p.img = url;
+                try {
+                    const data = await safeApiRequest(`/api/products/${encodeURIComponent(pid)}`, {
+                        method: 'PATCH',
+                        body: { product: p }
+                    });
+                    if (data.product) Object.assign(p, { ...data.product, quantity: p.quantity || 0 });
+                } catch (error) {
+                    console.warn('Product image save fallback:', error);
+                }
                 localStorage.setItem('products', JSON.stringify(products));
                 displayProducts(currentCategory);
                 displayProductsForEdit();
@@ -2769,6 +3257,15 @@
             if (!dataUrl) return;
             product.img = dataUrl;
             try {
+                try {
+                    const data = await safeApiRequest(`/api/products/${encodeURIComponent(productId)}`, {
+                        method: 'PATCH',
+                        body: { product }
+                    });
+                    if (data.product) Object.assign(product, { ...data.product, quantity: product.quantity || 0 });
+                } catch (error) {
+                    console.warn('Uploaded image save fallback:', error);
+                }
                 localStorage.setItem('products', JSON.stringify(products));
             } catch (e) {
                 alert("Rasm juda katta bo'lib qoldi. Iltimos, kichikroq rasm tanlang.");
@@ -2879,6 +3376,8 @@
             window.__appBootstrapped = true;
 
             await includePartials();
+            await loadProductsData();
+            await loadRoomsData();
 
             setInterval(updateOnlineUsers, 10000);
             window.addEventListener('beforeunload', () => {
@@ -2891,12 +3390,17 @@
             document.getElementById('courierDelivery')?.addEventListener('change', () => {
                 refreshCheckoutAddressSection();
                 updateCheckoutSummary();
+                validateAddress(false);
             });
+            document.getElementById('addressInput')?.addEventListener('input', () => validateAddress(false));
+            document.getElementById('addressInput')?.addEventListener('blur', () => validateAddress(true));
             refreshCheckoutAddressSection();
 
             loadCartState();
             createProfileDropdown();
             changeLang('uz');
+            await restoreBackendSession();
+            await loadOrdersData();
             updateCart();
             updateProfileDropdown();
             updateCheckoutForm();
