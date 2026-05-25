@@ -239,39 +239,242 @@
             else localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
         }
 
-        async function apiRequest(path, options = {}) {
-            const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-            const token = getAuthToken();
-            if (token) headers.Authorization = `Bearer ${token}`;
-            const apiBase = await getApiBase();
-
-            const response = await fetch(`${apiBase}${path}`, {
-                method: options.method || 'GET',
-                headers,
-                body: options.body === undefined ? undefined : JSON.stringify(options.body)
-            });
-
-            const raw = await response.text();
-            let data = {};
-            if (raw) {
-                try {
-                    data = JSON.parse(raw);
-                } catch {
-                    data = {};
-                }
-            }
-            if (!response.ok) {
-                const fallbackMessage = response.status === 404
-                    ? 'Server API topilmadi. Backend ishga tushmagan bo\'lishi mumkin.'
-                    : 'Request failed';
-                const error = new Error(data.error || fallbackMessage);
-                error.status = response.status;
-                throw error;
-            }
-            return data;
+        function persistUsers() {
+            localStorage.setItem('users', JSON.stringify(users));
         }
 
-        let backendAvailable = false;
+        function persistProducts() {
+            localStorage.setItem('products', JSON.stringify(products));
+        }
+
+        function persistOrders() {
+            localStorage.setItem('orders', JSON.stringify(orders));
+        }
+
+        function persistRooms() {
+            localStorage.setItem('rooms', JSON.stringify(rooms));
+        }
+
+        function nextUserId() {
+            return users.reduce((max, user) => Math.max(max, Number(user?.id) || 0), 0) + 1;
+        }
+
+        function publicUser(user) {
+            if (!user) return null;
+            return {
+                id: user.id,
+                name: user.name || '',
+                phone: user.phone || '',
+                avatar: user.avatar || '',
+                blocked: !!user.blocked,
+                maxOrder: Number(user.maxOrder) || 100,
+                isAdmin: !!user.isAdmin
+            };
+        }
+
+        function createApiError(status, message) {
+            const error = new Error(message);
+            error.status = status;
+            return error;
+        }
+
+        function requireAuthUser() {
+            if (!currentUser) throw createApiError(401, 'Avval kiring.');
+            return currentUser;
+        }
+
+        function requireAdminUser() {
+            const user = requireAuthUser();
+            if (!user.isAdmin) throw createApiError(403, 'Admin huquqi kerak.');
+            return user;
+        }
+
+        async function localApiRequest(path, options = {}) {
+            const method = String(options.method || 'GET').toUpperCase();
+            const body = options.body || {};
+
+            if (path === '/api/health' && method === 'GET') return { ok: true };
+
+            if (path === '/api/auth/register' && method === 'POST') {
+                const name = String(body.name || '').trim();
+                const phone = String(body.phone || '').trim();
+                const password = String(body.password || '').trim();
+                if (!name || !phone || !password) throw createApiError(400, 'Ma\'lumot yetarli emas.');
+                if (users.some((user) => user.phone === phone)) throw createApiError(409, 'Bu telefon raqam bilan foydalanuvchi mavjud.');
+                const user = {
+                    id: nextUserId(),
+                    name,
+                    phone,
+                    password,
+                    avatar: '',
+                    blocked: false,
+                    maxOrder: 100,
+                    isAdmin: users.length === 0
+                };
+                users.push(user);
+                persistUsers();
+                return { token: `local-token-${user.id}`, user: publicUser(user) };
+            }
+
+            if (path === '/api/auth/login' && method === 'POST') {
+                const phone = String(body.phone || '').trim();
+                const password = String(body.password || '').trim();
+                const user = users.find((item) => item.phone === phone && item.password === password);
+                if (!user) throw createApiError(401, 'Telefon raqam yoki parol noto\'g\'ri.');
+                return { token: `local-token-${user.id}`, user: publicUser(user) };
+            }
+
+            if (path === '/api/auth/logout' && method === 'POST') return { ok: true };
+
+            if (path === '/api/auth/me' && method === 'GET') {
+                const user = requireAuthUser();
+                const stored = users.find((item) => String(item.id) === String(user.id)) || user;
+                return { user: publicUser(stored) };
+            }
+
+            if (path === '/api/auth/me' && method === 'PATCH') {
+                const user = requireAuthUser();
+                const target = users.find((item) => String(item.id) === String(user.id));
+                if (!target) throw createApiError(404, 'Foydalanuvchi topilmadi.');
+                const nextPhone = String(body.phone || target.phone).trim();
+                const conflict = users.find((item) => String(item.id) !== String(target.id) && item.phone === nextPhone);
+                if (conflict) throw createApiError(409, 'Bu telefon band.');
+                target.name = String(body.name || target.name).trim() || target.name;
+                target.phone = nextPhone;
+                if (typeof body.avatar === 'string') target.avatar = body.avatar.trim();
+                persistUsers();
+                return { user: publicUser(target) };
+            }
+
+            if (path === '/api/users' && method === 'GET') {
+                requireAdminUser();
+                return { users: users.map(publicUser) };
+            }
+
+            const userMatch = path.match(/^\/api\/users\/([^/]+)$/);
+            if (userMatch && method === 'PATCH') {
+                requireAdminUser();
+                const target = users.find((item) => String(item.id) === decodeURIComponent(userMatch[1]));
+                if (!target) throw createApiError(404, 'Foydalanuvchi topilmadi.');
+                Object.assign(target, body.user || {});
+                persistUsers();
+                return { user: publicUser(target), users: users.map(publicUser) };
+            }
+            if (userMatch && method === 'DELETE') {
+                requireAdminUser();
+                users = users.filter((item) => String(item.id) !== decodeURIComponent(userMatch[1]));
+                persistUsers();
+                return { users: users.map(publicUser) };
+            }
+
+            if (path === '/api/products' && method === 'GET') return { products };
+            if (path === '/api/products/bootstrap' && method === 'POST') {
+                setProductsState(Array.isArray(body.products) ? body.products : []);
+                persistProducts();
+                return { products };
+            }
+            if (path === '/api/products' && method === 'POST') {
+                requireAdminUser();
+                const product = { ...(body.product || {}) };
+                products.push({ ...product, quantity: 0 });
+                persistProducts();
+                return { product, products };
+            }
+            if (path === '/api/products/images' && method === 'PATCH') {
+                requireAdminUser();
+                const url = String(body.url || '').trim();
+                products = products.map((product) => ({ ...product, img: url || product.img, quantity: product.quantity || 0 }));
+                persistProducts();
+                return { products };
+            }
+
+            const productMatch = path.match(/^\/api\/products\/([^/]+)$/);
+            if (productMatch && method === 'PATCH') {
+                requireAdminUser();
+                const productId = decodeURIComponent(productMatch[1]);
+                const index = products.findIndex((item) => String(item.id) === productId);
+                if (index === -1) throw createApiError(404, 'Mahsulot topilmadi.');
+                products[index] = { ...products[index], ...(body.product || {}), quantity: products[index].quantity || 0 };
+                persistProducts();
+                return { product: products[index], products };
+            }
+            if (productMatch && method === 'DELETE') {
+                requireAdminUser();
+                const productId = decodeURIComponent(productMatch[1]);
+                products = products.filter((item) => String(item.id) !== productId);
+                persistProducts();
+                return { products };
+            }
+
+            if (path === '/api/orders/bootstrap' && method === 'POST') {
+                orders = Array.isArray(body.orders) ? body.orders : [];
+                persistOrders();
+                return { orders };
+            }
+            if (path === '/api/orders/mine' && method === 'GET') {
+                const user = requireAuthUser();
+                return { orders: orders.filter((order) => String(order.userId) === String(user.id)) };
+            }
+            if (path === '/api/orders' && method === 'GET') {
+                const user = requireAuthUser();
+                if (user.isAdmin) return { orders };
+                return { orders: orders.filter((order) => String(order.userId) === String(user.id)) };
+            }
+            if (path === '/api/orders' && method === 'POST') {
+                requireAuthUser();
+                const order = body.order || {};
+                orders.push(order);
+                persistOrders();
+                return { order, orders };
+            }
+
+            const orderMatch = path.match(/^\/api\/orders\/([^/]+)$/);
+            if (orderMatch && method === 'DELETE') {
+                requireAdminUser();
+                const orderId = decodeURIComponent(orderMatch[1]);
+                orders = orders.filter((order) => String(order.id) !== orderId);
+                persistOrders();
+                return { orders };
+            }
+
+            if (path === '/api/rooms' && method === 'GET') return { rooms };
+            if (path === '/api/rooms/bootstrap' && method === 'POST') {
+                rooms = normalizeRooms(body.rooms);
+                persistRooms();
+                return { rooms };
+            }
+
+            const roomBookingMatch = path.match(/^\/api\/rooms\/([^/]+)\/bookings$/);
+            if (roomBookingMatch && method === 'POST') {
+                requireAuthUser();
+                const roomId = Number(decodeURIComponent(roomBookingMatch[1]));
+                const room = rooms.find((item) => Number(item.id) === roomId);
+                if (!room) throw createApiError(404, 'Xona topilmadi.');
+                room.bookings.push(body.booking);
+                persistRooms();
+                return { rooms };
+            }
+
+            const deleteBookingMatch = path.match(/^\/api\/rooms\/([^/]+)\/bookings\/([^/]+)$/);
+            if (deleteBookingMatch && method === 'DELETE') {
+                requireAuthUser();
+                const roomId = Number(decodeURIComponent(deleteBookingMatch[1]));
+                const bookingId = decodeURIComponent(deleteBookingMatch[2]);
+                const room = rooms.find((item) => Number(item.id) === roomId);
+                if (!room) throw createApiError(404, 'Xona topilmadi.');
+                room.bookings = room.bookings.filter((booking) => String(booking.id) !== bookingId);
+                persistRooms();
+                return { rooms };
+            }
+
+            throw createApiError(404, 'API topilmadi.');
+        }
+
+        async function apiRequest(path, options = {}) {
+            return localApiRequest(path, options);
+        }
+
+        let backendAvailable = true;
 
         async function safeApiRequest(path, options = {}) {
             try {
@@ -1829,6 +2032,18 @@
             return changed;
         }
 
+        function stripDigits(value) {
+            return String(value || '').replace(/\d+/g, '');
+        }
+
+        function sanitizeSearchInput(inputId) {
+            const input = document.getElementById(inputId);
+            if (!input) return '';
+            const sanitized = stripDigits(input.value);
+            if (input.value !== sanitized) input.value = sanitized;
+            return sanitized;
+        }
+
         function migrateProductWeights(list) {
             if (!Array.isArray(list)) return false;
             let changed = false;
@@ -2648,8 +2863,7 @@
         }
 
         function searchProducts() {
-            const searchInput = document.getElementById('searchInput');
-            searchQuery = searchInput.value.toLowerCase().trim();
+            searchQuery = sanitizeSearchInput('searchInput').toLowerCase().trim();
             document.getElementById('clearSearch').style.display = searchQuery.length > 0 ? 'block' : 'none';
             document.getElementById('searchStats').style.display = searchQuery.length > 0 ? 'block' : 'none';
             displayProducts(currentCategory);
@@ -3168,7 +3382,7 @@
         }
 
         function filterAdminProducts() {
-            adminSearchQuery = document.getElementById('adminSearchInput')?.value.toLowerCase().trim() || '';
+            adminSearchQuery = sanitizeSearchInput('adminSearchInput').toLowerCase().trim();
             displayProductsForEdit();
         }
 

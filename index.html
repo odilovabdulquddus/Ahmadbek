@@ -81,7 +81,8 @@
         </div>
         <div class="nav-right">
             <div class="search-container">
-                <input type="text" class="search-input" id="searchInput" placeholder="Qidirish..."
+                <input type="text" class="search-input" id="searchInput" placeholder="Qidirish..." inputmode="text"
+                    oninput="sanitizeSearchInput('searchInput')"
                     onkeyup="searchProducts()">
                 <i class="fas fa-search search-icon" onclick="searchProducts()"></i>
                 <i class="fas fa-times clear-search" id="clearSearch" onclick="clearSearch()"></i>
@@ -194,7 +195,8 @@
                 </button>
                 <div class="admin-search-filter">
                     <div class="admin-search-container">
-                        <input type="text" class="admin-search-input" id="adminSearchInput"
+                        <input type="text" class="admin-search-input" id="adminSearchInput" inputmode="text"
+                            oninput="sanitizeSearchInput('adminSearchInput')"
                             placeholder="Mahsulot qidirish..." onkeyup="filterAdminProducts()">
                         <i class="fas fa-search admin-search-icon"></i>
                         <i class="fas fa-times admin-clear-search" id="adminClearSearch"
